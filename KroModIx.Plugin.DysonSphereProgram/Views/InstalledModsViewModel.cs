@@ -11,34 +11,49 @@ using KroModIx.Plugin.DysonSphereProgram.Services;
 
 namespace KroModIx.Plugin.DysonSphereProgram.Views;
 
-/// <summary>Installiert-Tab: listet alle BepInEx-Plugins unter <c>plugins/</c>
-/// mit Toggle + Uninstall + Bulk-Aktionen. Kein Cover (BepInEx-Plugins haben
-/// keine Assets), nur Name + Meta.</summary>
-public sealed partial class InstalledModsViewModel : ObservableObject
+/// <summary>Installiert-Tab. Zeigt BepInEx-Plugins. Wenn BepInEx nicht
+/// installiert ist: Bootstrap-Assistent (Nexus/BepInEx-GitHub-Auto-Download).
+/// <para>v0.2: Refresh laeuft off-thread (Kernprinzip 3), BepInEx-Marker
+/// wird lazy per Task.Run gecheckt. Rows-Rebuild danach auf UI-Thread.</para></summary>
+public sealed partial class InstalledModsViewModel : ObservableObject, IDisposable
 {
     private readonly DetectedGame _game;
     private readonly BepInExScanner _scanner;
     private readonly DspInstallService _installer;
     private readonly DspPathResolver _paths;
+    private readonly BepInExBootstrapper _bootstrapper;
+    private readonly DownloadEventBus _bus;
     private readonly IHostServices _host;
+    private readonly EventHandler _installedHandler;
 
-    [ObservableProperty] private string _statusText = "";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(NeedsBepInExBootstrap))]
+    private string _statusText = "";
+
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private string _filterText = "";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(NeedsBepInExBootstrap))]
+    private bool _bepInExInstalled;
+
+    public bool NeedsBepInExBootstrap => !BepInExInstalled;
 
     public ObservableCollection<ModRow> Rows { get; } = new();
     private List<ModRow> _allRows = new();
 
     public InstalledModsViewModel(DetectedGame game, BepInExScanner scanner,
-        DspInstallService installer, DspPathResolver paths, IHostServices host)
+        DspInstallService installer, DspPathResolver paths,
+        BepInExBootstrapper bootstrapper, DownloadEventBus bus, IHostServices host)
     {
-        _game = game;
-        _scanner = scanner;
-        _installer = installer;
-        _paths = paths;
-        _host = host;
-        Refresh();
+        _game = game; _scanner = scanner; _installer = installer; _paths = paths;
+        _bootstrapper = bootstrapper; _bus = bus; _host = host;
+        _installedHandler = (_, _) => Dispatcher.UIThread.Post(() => _ = RefreshAsync());
+        _bus.ModInstalled += _installedHandler;
+        _ = RefreshAsync();
     }
+
+    public void Dispose() => _bus.ModInstalled -= _installedHandler;
 
     partial void OnFilterTextChanged(string value) => ApplyFilter();
 
@@ -52,20 +67,32 @@ public sealed partial class InstalledModsViewModel : ObservableObject
         foreach (var r in matched) Rows.Add(r);
     }
 
+    /// <summary>Off-thread Refresh. BepInEx-Marker-Check + Scan in Task.Run,
+    /// nur Row-Rebuild + Status-Update sind UI-Thread. Kein Freeze beim
+    /// initialen Plugin-Load — auch bei 100+ Plugins bleibt die App
+    /// responsive (Kernprinzip 3).</summary>
     [RelayCommand]
-    private void Refresh()
+    private async Task RefreshAsync()
     {
         try
         {
             IsBusy = true;
-            if (!_paths.LooksLikeBepInExInstall(_game))
+            var (bepInExOk, mods) = await Task.Run(() =>
+            {
+                var ok = _paths.LooksLikeBepInExInstall(_game);
+                var scan = ok
+                    ? _scanner.ScanAll(_game)
+                    : (IReadOnlyList<DspMod>)Array.Empty<DspMod>();
+                return (ok, scan);
+            });
+            BepInExInstalled = bepInExOk;
+            if (!bepInExOk)
             {
                 StatusText = Strings.T("status.no_bepinex");
                 _allRows = new();
                 Rows.Clear();
                 return;
             }
-            var mods = _scanner.ScanAll(_game);
             _allRows = mods.Select(m => new ModRow(m)).ToList();
             var enabled = mods.Count(m => m.IsEnabled);
             var disabled = mods.Count - enabled;
@@ -82,6 +109,40 @@ public sealed partial class InstalledModsViewModel : ObservableObject
     {
         var dir = _paths.GetPluginsDir(_game);
         _host.Shell.OpenDirectory(dir);
+    }
+
+    [RelayCommand]
+    private async Task InstallBepInExAsync()
+    {
+        var ok = await _host.Dialogs.ConfirmAsync(
+            Strings.T("dialog.bepinex_install_title"),
+            string.Format(Strings.T("dialog.bepinex_install_msg"), _game.InstallDir),
+            okLabel: Strings.T("dialog.bepinex_install_ok"));
+        if (!ok) return;
+
+        using var scope = _host.BeginProgress(Strings.T("progress.bepinex_install"));
+        try
+        {
+            IsBusy = true;
+            _host.Notifications.Notify(Strings.T("notify.bepinex_installing"), NotificationLevel.Info);
+            var progress = new Progress<double>(f =>
+                scope.Report(f, $"BepInEx · {(int)(f * 100)}%"));
+            var result = await _bootstrapper.InstallAsync(_game.InstallDir, progress);
+            if (result.Success)
+            {
+                _host.Notifications.Notify(
+                    string.Format(Strings.T("notify.bepinex_ok"), result.Version),
+                    NotificationLevel.Success);
+                await RefreshAsync();
+            }
+            else
+            {
+                _host.Notifications.Notify(
+                    string.Format(Strings.T("notify.bepinex_fail"), result.ErrorMessage),
+                    NotificationLevel.Error);
+            }
+        }
+        finally { IsBusy = false; }
     }
 
     [RelayCommand]
@@ -118,7 +179,7 @@ public sealed partial class InstalledModsViewModel : ObservableObject
             _installer.Uninstall(row.Mod);
             _host.Notifications.Notify(Strings.T("notify.uninstalled_prefix") + row.Mod.Name,
                 NotificationLevel.Success);
-            Refresh();
+            await RefreshAsync();
         }
         catch (Exception ex)
         {
@@ -153,7 +214,7 @@ public sealed partial class InstalledModsViewModel : ObservableObject
         }
         _host.Notifications.Notify(string.Format(Strings.T("notify.bulk_disable_result"), done, failed),
             failed == 0 ? NotificationLevel.Success : NotificationLevel.Warning);
-        Refresh();
+        await RefreshAsync();
     }
 
     [RelayCommand]
@@ -176,14 +237,13 @@ public sealed partial class InstalledModsViewModel : ObservableObject
         }
         _host.Notifications.Notify(string.Format(Strings.T("notify.bulk_enable_result"), done, failed),
             failed == 0 ? NotificationLevel.Success : NotificationLevel.Warning);
-        Refresh();
+        await RefreshAsync();
     }
 }
 
 public sealed partial class ModRow : ObservableObject
 {
     public ModRow(DspMod mod) => Mod = mod;
-
     [ObservableProperty] private DspMod _mod;
 
     public string StatusLabel => Mod.IsEnabled ? Strings.T("row.status_active") : Strings.T("row.status_inactive");
@@ -200,7 +260,7 @@ public sealed partial class ModRow : ObservableObject
     {
         get
         {
-            var parts = new System.Collections.Generic.List<string>
+            var parts = new List<string>
             {
                 Mod.IsDirectory ? "Ordner" : "DLL",
                 SizeText,

@@ -10,13 +10,48 @@ using KroModIx.Plugin.DysonSphereProgram.Services;
 
 namespace KroModIx.Plugin.DysonSphereProgram.Views;
 
-/// <summary>Installiert-Tab: Toolbar (Refresh, Open-Folder, Bulk-Aktionen)
-/// + Filter + Row-Liste. Kroste-Card-Row-Layout ohne Cover-Frame (BepInEx-
-/// Plugins haben keinen Nexus-Cover-Cache in v0.1).</summary>
+/// <summary>Installiert-Tab: Toolbar + Bootstrap-Panel (wenn BepInEx fehlt)
+/// + Row-Liste. Bootstrap-Panel ist zentraler CTA wenn BepInEx nicht da
+/// ist — visuell dominant statt kleine muted-Statuszeile.</summary>
 public sealed class InstalledModsView : UserControl
 {
     public InstalledModsView()
     {
+        // ---- BepInEx-Bootstrap-Panel (nur sichtbar wenn NeedsBepInExBootstrap) ----
+        var bootstrapPanel = new Border
+        {
+            Padding = new Thickness(20),
+            Margin = new Thickness(0, 12, 0, 12),
+            CornerRadius = new CornerRadius(8),
+            [!Border.BackgroundProperty] = new DynamicResourceExtension("KrosteSurfaceBrush"),
+        };
+        var bootstrapStack = new StackPanel { Spacing = 10 };
+        var bootstrapTitle = new TextBlock
+        {
+            Text = "⚙  BepInEx nicht installiert",
+            FontSize = 16,
+            FontWeight = FontWeight.SemiBold,
+        };
+        bootstrapStack.Children.Add(bootstrapTitle);
+        var bootstrapBody = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        bootstrapBody.Classes.Add("muted");
+        bootstrapBody.Bind(TextBlock.TextProperty, new Binding(nameof(InstalledModsViewModel.StatusText)));
+        bootstrapStack.Children.Add(bootstrapBody);
+        var bootstrapBtn = new Button
+        {
+            Content = Strings.T("btn.install_bepinex"),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 6, 0, 0),
+        };
+        bootstrapBtn.Classes.Add("accent");
+        bootstrapBtn.Bind(Button.CommandProperty,
+            new Binding(nameof(InstalledModsViewModel.InstallBepInExCommand)));
+        bootstrapStack.Children.Add(bootstrapBtn);
+        bootstrapPanel.Child = bootstrapStack;
+        bootstrapPanel.Bind(Border.IsVisibleProperty,
+            new Binding(nameof(InstalledModsViewModel.NeedsBepInExBootstrap)));
+
+        // ---- Normal-Mode: Toolbar + Filter + Liste (sichtbar wenn BepInEx da) ----
         var refreshBtn = new Button { Content = Strings.T("btn.refresh") };
         refreshBtn.Bind(Button.CommandProperty,
             new Binding(nameof(InstalledModsViewModel.RefreshCommand)));
@@ -38,16 +73,18 @@ public sealed class InstalledModsView : UserControl
 
         var toolbar = new StackPanel
         {
-            Orientation = Orientation.Horizontal,
-            Spacing = 8,
+            Orientation = Orientation.Horizontal, Spacing = 8,
             Margin = new Thickness(0, 0, 0, 8),
             Children = { refreshBtn, openBtn, enableAllBtn, disableAllBtn },
         };
+        toolbar.Bind(StackPanel.IsVisibleProperty,
+            new Binding(nameof(InstalledModsViewModel.BepInExInstalled)));
 
         var status = new TextBlock { Margin = new Thickness(0, 0, 0, 4) };
         status.Classes.Add("muted");
-        status.Bind(TextBlock.TextProperty,
-            new Binding(nameof(InstalledModsViewModel.StatusText)));
+        status.Bind(TextBlock.TextProperty, new Binding(nameof(InstalledModsViewModel.StatusText)));
+        status.Bind(TextBlock.IsVisibleProperty,
+            new Binding(nameof(InstalledModsViewModel.BepInExInstalled)));
 
         var filter = new TextBox
         {
@@ -56,6 +93,8 @@ public sealed class InstalledModsView : UserControl
         };
         filter.Bind(TextBox.TextProperty,
             new Binding(nameof(InstalledModsViewModel.FilterText)) { Mode = BindingMode.TwoWay });
+        filter.Bind(TextBox.IsVisibleProperty,
+            new Binding(nameof(InstalledModsViewModel.BepInExInstalled)));
 
         var list = new ListBox
         {
@@ -68,12 +107,15 @@ public sealed class InstalledModsView : UserControl
             new Binding(nameof(InstalledModsViewModel.Rows)));
         list.ItemTemplate = new FuncDataTemplate<ModRow>((row, _) =>
             row is null ? null : BuildRowCard(), true);
+        list.Bind(ListBox.IsVisibleProperty,
+            new Binding(nameof(InstalledModsViewModel.BepInExInstalled)));
 
         Content = new DockPanel
         {
             Margin = new Thickness(16, 12),
             Children =
             {
+                WithDock(bootstrapPanel, Dock.Top),
                 WithDock(toolbar, Dock.Top),
                 WithDock(status, Dock.Top),
                 WithDock(filter, Dock.Top),
@@ -86,8 +128,7 @@ public sealed class InstalledModsView : UserControl
     {
         var iconFrame = new Border
         {
-            Width = 60, Height = 60,
-            CornerRadius = new CornerRadius(6),
+            Width = 60, Height = 60, CornerRadius = new CornerRadius(6),
             [!Border.BackgroundProperty] = new DynamicResourceExtension("KrosteSurfaceBrush"),
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -103,8 +144,7 @@ public sealed class InstalledModsView : UserControl
 
         var name = new TextBlock
         {
-            FontWeight = FontWeight.SemiBold,
-            FontSize = 14,
+            FontWeight = FontWeight.SemiBold, FontSize = 14,
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
         name.Bind(TextBlock.TextProperty, new Binding("Mod.Name"));
@@ -122,24 +162,22 @@ public sealed class InstalledModsView : UserControl
 
         var titleColumn = new StackPanel
         {
-            Spacing = 2,
-            VerticalAlignment = VerticalAlignment.Center,
+            Spacing = 2, VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(14, 0, 0, 0),
             Children = { name, subtitle, status },
         };
 
         var toggleBtn = new Button();
         toggleBtn.Bind(Button.ContentProperty, new Binding(nameof(ModRow.ToggleButtonLabel)));
-        BindRowCommand(toggleBtn, nameof(InstalledModsViewModel.ToggleEnabledCommand));
+        BindRowCmd(toggleBtn, nameof(InstalledModsViewModel.ToggleEnabledCommand));
 
         var uninstallBtn = new Button { Content = Strings.T("btn.uninstall") };
         uninstallBtn.Classes.Add("danger");
-        BindRowCommand(uninstallBtn, nameof(InstalledModsViewModel.UninstallCommand));
+        BindRowCmd(uninstallBtn, nameof(InstalledModsViewModel.UninstallCommand));
 
         var actions = new StackPanel
         {
-            Spacing = 6,
-            VerticalAlignment = VerticalAlignment.Center,
+            Spacing = 6, VerticalAlignment = VerticalAlignment.Center,
             Children = { toggleBtn, uninstallBtn },
         };
 
@@ -160,13 +198,13 @@ public sealed class InstalledModsView : UserControl
         return card;
     }
 
-    private static void BindRowCommand(Button btn, string commandName)
+    private static void BindRowCmd(Button btn, string cmd)
     {
         btn.Bind(Button.CommandProperty, new Binding
         {
             RelativeSource = new RelativeSource
             { Mode = RelativeSourceMode.FindAncestor, AncestorType = typeof(ListBox) },
-            Path = "DataContext." + commandName,
+            Path = "DataContext." + cmd,
         });
         btn.Bind(Button.CommandParameterProperty, new Binding("."));
     }
