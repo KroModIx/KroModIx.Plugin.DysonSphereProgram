@@ -28,6 +28,14 @@ public sealed class BepInExBootstrapper
 
     private readonly HttpClient _http;
 
+    /// <summary>Fallback-URL wenn die GitHub-API fehlschlaegt (rate limit,
+    /// Netz weg). Ist ein bekannter stable Release der zum DSP-Zeitpunkt
+    /// aktuell war. Kann bei Bedarf per neuem Plugin-Release aktualisiert
+    /// werden. GitHub-CDN erlaubt anonymous Downloads ohne API-Rate-Limit.</summary>
+    private const string FallbackAsset =
+        "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_win_x64_5.4.23.5.zip";
+    private const string FallbackVersion = "v5.4.23.5";
+
     public BepInExBootstrapper(HttpClient http) => _http = http;
 
     /// <summary>Downloadet + entpackt BepInEx IL2CPP x64 (bleeding-edge oder
@@ -39,43 +47,27 @@ public sealed class BepInExBootstrapper
         try
         {
             progress?.Report(0.05);
-            // Release-Assets fetchen (bis zu 30 Releases nach neuesten sortiert).
             _http.DefaultRequestHeaders.UserAgent.TryParseAdd("KroModIx-DSP-Plugin/1.0");
             _http.DefaultRequestHeaders.Accept.TryParseAdd("application/vnd.github+json");
-            var releasesJson = await _http.GetStringAsync(ReleasesApi + "?per_page=30", ct);
-            var releases = JsonSerializer.Deserialize<GhRelease[]>(releasesJson, JsonOpts);
-            if (releases is null || releases.Length == 0)
-                return BepInExInstallResult.Fail("BepInEx-Releases-Liste ist leer.");
+            // Optional: GITHUB_TOKEN aus Env-Var → 5000 statt 60 req/h (analog PluginUpdateService v1.10.2).
+            var ghToken = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
+            if (!string.IsNullOrEmpty(ghToken))
+                _http.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ghToken);
 
-            // Zielt: BepInEx v5.x stable Mono win_x64 (DSP ist Unity Mono).
-            // Linux nutzt Proton → braucht die Windows-x64-Variante (Proton
-            // uebersetzt Windows-DLL-Calls, Mono-Loader funktioniert transparent).
-            // Prerelease-Releases (v6-pre) werden uebersprungen — die sind
-            // IL2CPP-focused und wuerden auf einem Mono-Spiel nicht laden.
-            string? url = null; string? assetName = null; string? version = null;
-            foreach (var rel in releases)
-            {
-                if (rel.Prerelease) continue; // v6 pre skippen
-                foreach (var asset in rel.Assets ?? Array.Empty<GhAsset>())
-                {
-                    var name = asset.Name ?? "";
-                    // BepInEx_win_x64_<ver>.zip (v5-Mono-Naming, Underscore)
-                    if (name.StartsWith("BepInEx_win_x64_", StringComparison.OrdinalIgnoreCase)
-                        && name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-                    {
-                        url = asset.BrowserDownloadUrl;
-                        assetName = name;
-                        version = rel.TagName;
-                        break;
-                    }
-                }
-                if (url is not null) break;
-            }
+            // Erst API probieren — liefert neueste stable Version.
+            var (url, assetName, version) = await TryFindLatestFromApiAsync(ct);
+
+            // Fallback: hartcoded latest-known-good (KEIN API-Call).
+            // Greift bei GitHub-403 (rate limit), Netz-Ausfall oder wenn kein
+            // stable Release die Assets liefert.
             if (url is null)
-                return BepInExInstallResult.Fail(
-                    "Kein passendes BepInEx_win_x64-ZIP (v5 Mono, stable) in den letzten 30 " +
-                    "BepInEx-Releases gefunden. Fallback: manuell von github.com/BepInEx/BepInEx/releases " +
-                    "laden und ins Game-Root entpacken.");
+            {
+                Log.Info("GitHub-API-Fallback aktiv — verwende {Ver} direkt", FallbackVersion);
+                url = FallbackAsset;
+                assetName = Path.GetFileName(FallbackAsset);
+                version = FallbackVersion;
+            }
 
             Log.Info("BepInEx-Download: {Asset} von {Url}", assetName, url);
             progress?.Report(0.1);
@@ -137,6 +129,47 @@ public sealed class BepInExBootstrapper
         {
             Log.Warn(ex, "BepInEx-Install fehlgeschlagen");
             return BepInExInstallResult.Fail(ex.Message);
+        }
+    }
+
+    /// <summary>Versucht ueber die GitHub-API das neueste stable-BepInEx-Release
+    /// zu finden. Liefert (null, null, null) bei jedem Fehler (403 Rate-Limit,
+    /// Netz weg, Kein-Match). Caller faellt dann auf <see cref="FallbackAsset"/>
+    /// zurueck. Wichtig: NICHT werfen — der Fallback ist Teil des Normal-Flows,
+    /// keine Exception.</summary>
+    private async Task<(string? Url, string? AssetName, string? Version)> TryFindLatestFromApiAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var resp = await _http.GetAsync(ReleasesApi + "?per_page=30", ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                Log.Info("GitHub-API {Status} — nutze Fallback-Asset", (int)resp.StatusCode);
+                return (null, null, null);
+            }
+            var releasesJson = await resp.Content.ReadAsStringAsync(ct);
+            var releases = JsonSerializer.Deserialize<GhRelease[]>(releasesJson, JsonOpts);
+            if (releases is null || releases.Length == 0) return (null, null, null);
+
+            foreach (var rel in releases)
+            {
+                if (rel.Prerelease) continue; // v6-pre skippen (IL2CPP)
+                foreach (var asset in rel.Assets ?? Array.Empty<GhAsset>())
+                {
+                    var name = asset.Name ?? "";
+                    if (name.StartsWith("BepInEx_win_x64_", StringComparison.OrdinalIgnoreCase)
+                        && name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return (asset.BrowserDownloadUrl, name, rel.TagName);
+                    }
+                }
+            }
+            return (null, null, null);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "GitHub-API-Query fehlgeschlagen — nutze Fallback");
+            return (null, null, null);
         }
     }
 
