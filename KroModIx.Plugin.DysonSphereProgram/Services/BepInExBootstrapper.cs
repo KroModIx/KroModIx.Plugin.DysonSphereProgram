@@ -10,15 +10,17 @@ using NLog;
 
 namespace KroModIx.Plugin.DysonSphereProgram.Services;
 
-/// <summary>Laedt BepInEx (IL2CPP-Variante fuer DSP) direkt vom BepInEx-
-/// GitHub-Release und entpackt es ins Game-Root. Ohne diesen Bootstrap-
-/// Service muesste der User manuell von Nexus (mods/13) oder BepInEx-Github
-/// laden, entpacken und ins Game legen — genau der Reibungspunkt den ein
-/// Modmanager wegnehmen soll (Skill Kernprinzip 6).
+/// <summary>Laedt BepInEx direkt vom BepInEx-GitHub-Release und entpackt
+/// es ins Game-Root. Ohne diesen Bootstrap-Service muesste der User manuell
+/// von Nexus (mods/13) oder BepInEx-Github laden, entpacken und ins Game
+/// legen — genau der Reibungspunkt den ein Modmanager wegnehmen soll
+/// (Skill Kernprinzip 6).
 ///
-/// <para>DSP ist Unity IL2CPP → braucht die <c>BepInEx-Unity.IL2CPP</c>-
-/// Variante (nicht die BepInEx-Unity.Mono-Variante die auf DSP nichts tut).
-/// GitHub-Release-Asset-Pattern: <c>BepInEx-Unity.IL2CPP-{platform}-{arch}-{ver}.zip</c>.</para></summary>
+/// <para><b>DSP nutzt Unity Mono (2018-Generation), nicht IL2CPP</b> —
+/// braucht daher <c>BepInEx v5.x stable</c> (Mono-Variante), NICHT die
+/// v6-pre-IL2CPP-Variante. Asset-Pattern: <c>BepInEx_win_x64_{ver}.zip</c>
+/// (Underscore-Naming; nur v6-preX nutzt den Bindestrich-Namensraum
+/// <c>BepInEx-Unity.IL2CPP-win-x64-*</c>).</para></summary>
 public sealed class BepInExBootstrapper
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
@@ -45,16 +47,20 @@ public sealed class BepInExBootstrapper
             if (releases is null || releases.Length == 0)
                 return BepInExInstallResult.Fail("BepInEx-Releases-Liste ist leer.");
 
-            // Zielt: BepInEx IL2CPP x64 (Linux nutzt Proton → braucht die Windows-x64-Variante).
+            // Zielt: BepInEx v5.x stable Mono win_x64 (DSP ist Unity Mono).
+            // Linux nutzt Proton → braucht die Windows-x64-Variante (Proton
+            // uebersetzt Windows-DLL-Calls, Mono-Loader funktioniert transparent).
+            // Prerelease-Releases (v6-pre) werden uebersprungen — die sind
+            // IL2CPP-focused und wuerden auf einem Mono-Spiel nicht laden.
             string? url = null; string? assetName = null; string? version = null;
             foreach (var rel in releases)
             {
+                if (rel.Prerelease) continue; // v6 pre skippen
                 foreach (var asset in rel.Assets ?? Array.Empty<GhAsset>())
                 {
                     var name = asset.Name ?? "";
-                    // BepInEx-Unity.IL2CPP-win-x64-<ver>.zip
-                    if (name.Contains("Unity.IL2CPP", StringComparison.OrdinalIgnoreCase)
-                        && name.Contains("win-x64", StringComparison.OrdinalIgnoreCase)
+                    // BepInEx_win_x64_<ver>.zip (v5-Mono-Naming, Underscore)
+                    if (name.StartsWith("BepInEx_win_x64_", StringComparison.OrdinalIgnoreCase)
                         && name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
                     {
                         url = asset.BrowserDownloadUrl;
@@ -67,7 +73,9 @@ public sealed class BepInExBootstrapper
             }
             if (url is null)
                 return BepInExInstallResult.Fail(
-                    "Kein passendes IL2CPP-win-x64-ZIP in den letzten 30 BepInEx-Releases gefunden.");
+                    "Kein passendes BepInEx_win_x64-ZIP (v5 Mono, stable) in den letzten 30 " +
+                    "BepInEx-Releases gefunden. Fallback: manuell von github.com/BepInEx/BepInEx/releases " +
+                    "laden und ins Game-Root entpacken.");
 
             Log.Info("BepInEx-Download: {Asset} von {Url}", assetName, url);
             progress?.Report(0.1);
@@ -140,6 +148,7 @@ public sealed class BepInExBootstrapper
     private sealed class GhRelease
     {
         public string? TagName { get; set; }
+        public bool Prerelease { get; set; }
         public GhAsset[]? Assets { get; set; }
     }
     private sealed class GhAsset
