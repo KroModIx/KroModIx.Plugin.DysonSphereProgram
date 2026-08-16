@@ -1,8 +1,9 @@
 <Project>
   <ItemGroup>
-    <!-- v1.17.0: IWorkshopService + IGameModPlugin.OnGameAddedAsync
-         Default-Method (fuer Manual-Add-Live-Notify). -->
-    <PackageVersion Include="KroModIx.Plugin.Contracts" Version="1.17.0" />
+    <!-- v1.18.0: IImageDecoder (zentraler Bild-Decoder mit ffmpeg-Chain
+         fuer WebP/AVIF/DDS/HEIC) — Plugin muss keinen eigenen Bitmap-
+         Path mehr bauen. -->
+    <PackageVersion Include="KroModIx.Plugin.Contracts" Version="1.18.0" />
     <PackageVersion Include="Avalonia" Version="12.1.0" />
     <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageVersion Include="MinVer" Version="7.0.0" />

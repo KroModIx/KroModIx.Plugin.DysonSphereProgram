@@ -2,12 +2,12 @@
   "schema": 1,
   "id": "kroste.dysonsphereprogram",
   "displayName": "Dyson Sphere Program Mod-Manager",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "author": "Kroste",
   "description": "Mod-Manager für Dyson Sphere Program (Youthcat Studio). v0.2.0: Drei Tabs (Installiert / Nexus-Katalog / Downloads) + BepInEx-Auto-Install-Assistent (Direct-Download vom BepInEx-GitHub-Release, kein manueller Nexus-Umweg noetig). Nexus-Voll-Katalog via GraphQL (Sort + Search + Kategorie-Filter), SharpCompress-Auto-Layout-Install (BepInEx/plugins/-, Flat- oder Ordner-Layout). Async Refresh (kein UI-Freeze). DE+EN.",
   "assembly": "KroModIx.Plugin.DysonSphereProgram.dll",
   "entryType": "KroModIx.Plugin.DysonSphereProgram.DysonSphereProgramPlugin",
-  "minHostVersion": "1.17.0",
+  "minHostVersion": "1.18.0",
   "targets": [
     {
       "gameId": "dyson-sphere-program",

@@ -222,7 +222,6 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
             for (int i = startIndex; i < Rows.Count; i++) snapshot.Add(Rows[i]);
         });
         int pending = snapshot.Count(r => r.Cover is null && !string.IsNullOrEmpty(r.Source.PictureUrl));
-        _host.Logger.Debug("LoadCoversAsync: snapshot={N}, pending={P}", snapshot.Count, pending);
         if (pending == 0) { await Dispatcher.UIThread.InvokeAsync(() => CoverProgressText = ""); return; }
         int done = 0;
         void UpdateProgress() => CoverProgressText = $"🖼 {done}/{pending}";
@@ -231,33 +230,27 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
         {
             if (string.IsNullOrEmpty(row.Source.PictureUrl)) continue;
             if (row.Cover is not null) continue;
-            var path = await _covers.GetOrDownloadCoverAsync(row.Source.PictureUrl);
-            if (path is null) { done++; await Dispatcher.UIThread.InvokeAsync(UpdateProgress); continue; }
-            try
+
+            // v0.3.0: Bytes downloaden (CoverCache) und via Host-Baukasten
+            // zu Avalonia-Bitmap decoden. Kein Bitmap-Ctor-Selbstbau mehr —
+            // WebP/AVIF/DDS-Fallbacks + Thread-Affinity werden vom Host
+            // erledigt.
+            var bytes = await _covers.GetOrDownloadBytesAsync(row.Source.PictureUrl);
+            if (bytes is null) { done++; await Dispatcher.UIThread.InvokeAsync(UpdateProgress); continue; }
+            var bmp = await _host.Images.DecodeAsync(bytes);
+            if (bmp is null)
             {
-                // v0.2.2: Bitmap-Load auf UI-Thread — Skia hat thread-Affinity
-                // fuer manche Formate. Task.Run scheint zwar zu funktionieren
-                // (kein Fehler) aber die resultierende Bitmap wird vom UI
-                // nie gerendert. Kleiner Blockade pro Bild aber verlaesslich.
-                Bitmap? bmp = null;
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    using var s = File.OpenRead(path);
-                    bmp = new Bitmap(s);
-                    row.Cover = bmp;
-                    done++;
-                    UpdateProgress();
-                });
-                if (bmp is not null)
-                    _host.Logger.Debug("Cover set mod_id={Id} size={W}x{H}", row.Source.ModId,
-                        bmp.PixelSize.Width, bmp.PixelSize.Height);
+                _host.Logger.Debug("Cover-Decode fehlgeschlagen mod_id={Id}", row.Source.ModId);
+                done++;
+                await Dispatcher.UIThread.InvokeAsync(UpdateProgress);
+                continue;
             }
-            catch (Exception ex)
+            await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                _host.Logger.Warn(ex, "Cover-Bitmap-Load fehlgeschlagen mod_id={Id} path={Path}",
-                    row.Source.ModId, path);
-                done++; await Dispatcher.UIThread.InvokeAsync(UpdateProgress);
-            }
+                row.Cover = bmp;
+                done++;
+                UpdateProgress();
+            });
             await Task.Delay(150);
         }
         await Dispatcher.UIThread.InvokeAsync(() => CoverProgressText = "");
