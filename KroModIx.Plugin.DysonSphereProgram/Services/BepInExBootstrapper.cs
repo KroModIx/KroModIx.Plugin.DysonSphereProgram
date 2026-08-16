@@ -142,6 +142,12 @@ public sealed class BepInExBootstrapper
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
+        // GitHub-API liefert snake_case (tag_name, browser_download_url,
+        // prerelease). PropertyNameCaseInsensitive matcht KEIN snake_case
+        // — nur reine Case-Unterschiede. Ohne SnakeCaseLower-Naming-Policy
+        // waeren TagName/Assets/BrowserDownloadUrl/Prerelease alle null,
+        // die Asset-Suche wuerde silently fehlschlagen.
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
         PropertyNameCaseInsensitive = true,
     };
 
