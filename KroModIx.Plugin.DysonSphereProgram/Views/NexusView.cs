@@ -119,6 +119,7 @@ public sealed class NexusView : UserControl
             VerticalAlignment = VerticalAlignment.Center,
         };
         fallback.Classes.Add("muted");
+        fallback.Bind(TextBlock.IsVisibleProperty, new Binding(nameof(NexusRow.NoCover)));
         panel.Children.Add(fallback);
         var img = new Image
         {
@@ -127,6 +128,7 @@ public sealed class NexusView : UserControl
             VerticalAlignment = VerticalAlignment.Stretch,
         };
         img.Bind(Image.SourceProperty, new Binding(nameof(NexusRow.Cover)));
+        img.Bind(Image.IsVisibleProperty, new Binding(nameof(NexusRow.HasCover)));
         panel.Children.Add(img);
         coverFrame.Child = panel;
 

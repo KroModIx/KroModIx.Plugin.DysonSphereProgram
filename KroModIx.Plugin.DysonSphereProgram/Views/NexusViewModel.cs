@@ -41,6 +41,14 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<NexusRow> Rows { get; } = new();
     public ObservableCollection<string> Categories { get; } = new() { "" };
+    // v0.2.2: pro Nexus-ModId eine stabile Row-Instanz halten — STATIC,
+    // damit selbst wenn der Host den NexusViewModel mehrfach instanziiert
+    // (bei jedem Tab-Wechsel neue VM), alle VMs die SELBEN Row-Instanzen
+    // teilen. Ohne static: 127 „Cover set"-Logs fuer 17 Mods aber 0
+    // sichtbare Cover, weil jede VM ihren eigenen Row-Cache hatte und die
+    // aktuelle DataContext-VM's Rows nie die Covers bekamen.
+    private static readonly Dictionary<int, NexusRow> _rowsById = new();
+    private static readonly object _rowsByIdLock = new();
     public IReadOnlyList<NexusSortOption> SortOptions { get; } = new[]
     {
         new NexusSortOption(Strings.T("sort.latest_update"), NexusSort.LatestUpdate),
@@ -84,10 +92,29 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
             if (!string.IsNullOrEmpty(filter)
                 && !string.Equals(e.Category, filter, StringComparison.OrdinalIgnoreCase))
                 continue;
-            Rows.Add(new NexusRow(e) { IsPremium = IsPremium });
+            Rows.Add(GetOrCreateRow(e));
         }
         UpdateStatus();
         OnPropertyChanged(nameof(HasMore));
+    }
+
+    /// <summary>v0.2.2: liefert die stabile Row-Instanz zu einem Katalog-
+    /// Eintrag (per ModId gecached). Cover-Loads landen so IMMER auf der
+    /// Row-Instanz die auch im ListBox sitzt — selbst nach Filter-Wechsel /
+    /// Rebuild.</summary>
+    private NexusRow GetOrCreateRow(NexusCatalogEntry e)
+    {
+        lock (_rowsByIdLock)
+        {
+            if (_rowsById.TryGetValue(e.ModId, out var existing))
+            {
+                existing.IsPremium = IsPremium;
+                return existing;
+            }
+            var row = new NexusRow(e) { IsPremium = IsPremium };
+            _rowsById[e.ModId] = row;
+            return row;
+        }
     }
 
     private void RefreshCategoryOptions()
@@ -105,7 +132,15 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
         var preserve = SelectedCategory ?? "";
         Categories.Clear();
         foreach (var c in desired) Categories.Add(c);
-        SelectedCategory = Categories.Contains(preserve, StringComparer.OrdinalIgnoreCase) ? preserve : "";
+        // v0.2.2: SelectedCategory NUR neu setzen wenn der Wert wirklich weg
+        // waere — sonst triggert der Setter OnSelectedCategoryChanged →
+        // ApplyCategoryFilter → Rows.Clear() mitten in einer laufenden
+        // LoadCoversAsync-Loop. Ergebnis: 68 Cover-Sets fuer 17 Mods aber
+        // 0 sichtbare Cover, weil die Row-Instanzen ausgetauscht werden
+        // waehrend Cover-Property gesetzt wird.
+        var newValue = Categories.Contains(preserve, StringComparer.OrdinalIgnoreCase) ? preserve : "";
+        if (!string.Equals(newValue, SelectedCategory, StringComparison.Ordinal))
+            SelectedCategory = newValue;
     }
 
     private void ApplyCategoryFilter()
@@ -117,7 +152,7 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
             if (!string.IsNullOrEmpty(filter)
                 && !string.Equals(e.Category, filter, StringComparison.OrdinalIgnoreCase))
                 continue;
-            Rows.Add(new NexusRow(e) { IsPremium = IsPremium });
+            Rows.Add(GetOrCreateRow(e));
         }
         UpdateStatus();
         _ = LoadCoversAsync(0);
@@ -163,7 +198,7 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
             var before = _catalog.Cached.Count;
             await _catalog.LoadNextPageAsync();
             for (int i = before; i < _catalog.Cached.Count; i++)
-                Rows.Add(new NexusRow(_catalog.Cached[i]) { IsPremium = IsPremium });
+                Rows.Add(GetOrCreateRow(_catalog.Cached[i]));
             UpdateStatus();
             OnPropertyChanged(nameof(HasMore));
             _ = LoadCoversAsync(before);
@@ -187,6 +222,7 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
             for (int i = startIndex; i < Rows.Count; i++) snapshot.Add(Rows[i]);
         });
         int pending = snapshot.Count(r => r.Cover is null && !string.IsNullOrEmpty(r.Source.PictureUrl));
+        _host.Logger.Debug("LoadCoversAsync: snapshot={N}, pending={P}", snapshot.Count, pending);
         if (pending == 0) { await Dispatcher.UIThread.InvokeAsync(() => CoverProgressText = ""); return; }
         int done = 0;
         void UpdateProgress() => CoverProgressText = $"🖼 {done}/{pending}";
@@ -199,19 +235,27 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
             if (path is null) { done++; await Dispatcher.UIThread.InvokeAsync(UpdateProgress); continue; }
             try
             {
-                var bmp = await Task.Run(() =>
-                {
-                    using var s = File.OpenRead(path);
-                    return new Bitmap(s);
-                });
+                // v0.2.2: Bitmap-Load auf UI-Thread — Skia hat thread-Affinity
+                // fuer manche Formate. Task.Run scheint zwar zu funktionieren
+                // (kein Fehler) aber die resultierende Bitmap wird vom UI
+                // nie gerendert. Kleiner Blockade pro Bild aber verlaesslich.
+                Bitmap? bmp = null;
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    row.Cover = bmp; done++; UpdateProgress();
+                    using var s = File.OpenRead(path);
+                    bmp = new Bitmap(s);
+                    row.Cover = bmp;
+                    done++;
+                    UpdateProgress();
                 });
+                if (bmp is not null)
+                    _host.Logger.Debug("Cover set mod_id={Id} size={W}x{H}", row.Source.ModId,
+                        bmp.PixelSize.Width, bmp.PixelSize.Height);
             }
             catch (Exception ex)
             {
-                _host.Logger.Debug(ex, "Cover-Bitmap-Load fehlgeschlagen mod_id={Id}", row.Source.ModId);
+                _host.Logger.Warn(ex, "Cover-Bitmap-Load fehlgeschlagen mod_id={Id} path={Path}",
+                    row.Source.ModId, path);
                 done++; await Dispatcher.UIThread.InvokeAsync(UpdateProgress);
             }
             await Task.Delay(150);
@@ -266,7 +310,12 @@ public sealed partial class NexusRow : ObservableObject
     public NexusRow(NexusCatalogEntry source) => Source = source;
     public NexusCatalogEntry Source { get; }
     [ObservableProperty] private bool _isPremium;
-    [ObservableProperty] private Bitmap? _cover;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasCover))]
+    [NotifyPropertyChangedFor(nameof(NoCover))]
+    private Bitmap? _cover;
+    public bool HasCover => Cover is not null;
+    public bool NoCover => Cover is null;
 
     public string Name => Source.Name;
     public string Author => Source.Author;
