@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="KroModIx.Plugin.DysonSphereProgram/KroModIx.Plugin.DysonSphereProgram.csproj" />
+  <Project Path="KroModIx.Plugin.DysonSphereProgram.Tests/KroModIx.Plugin.DysonSphereProgram.Tests.csproj" />
+</Solution>

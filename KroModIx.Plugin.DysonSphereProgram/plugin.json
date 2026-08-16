@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "id": "kroste.dysonsphereprogram",
+  "displayName": "Dyson Sphere Program Mod-Manager",
+  "version": "0.1.0",
+  "author": "Kroste",
+  "description": "Mod-Manager für Dyson Sphere Program (Youthcat Studio). Erkennt BepInEx-Plugins unter BepInEx/plugins/ (DLL-basiert, ordner-optional). Enable/Disable via .disabled-Suffix, Uninstall, Bulk-Aktionen. v0.1.0: Installiert-Tab. Nexus-Katalog + Downloads-Tab kommen in v0.2+.",
+  "assembly": "KroModIx.Plugin.DysonSphereProgram.dll",
+  "entryType": "KroModIx.Plugin.DysonSphereProgram.DysonSphereProgramPlugin",
+  "minHostVersion": "1.17.0",
+  "targets": [
+    {
+      "gameId": "dyson-sphere-program",
+      "displayName": "Dyson Sphere Program",
+      "steamAppId": 1366540,
+      "alternativeExecutableNames": ["DSPGAME.exe"],
+      "platforms": "Both"
+    }
+  ],
+  "updateSource": {
+    "kind": "github",
+    "repo": "KroModIx/KroModIx.Plugin.DysonSphereProgram"
+  }
+}

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>KroModIx.Plugin.DysonSphereProgram</RootNamespace>
+    <AssemblyName>KroModIx.Plugin.DysonSphereProgram</AssemblyName>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Host-Assemblies: ExcludeAssets=runtime — kommen vom Host mit. -->
+    <PackageReference Include="KroModIx.Plugin.Contracts"
+                      PrivateAssets="all" ExcludeAssets="runtime" />
+    <PackageReference Include="Avalonia"
+                      PrivateAssets="all" ExcludeAssets="runtime" />
+    <PackageReference Include="CommunityToolkit.Mvvm"
+                      PrivateAssets="all" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="plugin.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
