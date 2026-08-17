@@ -36,6 +36,13 @@ public sealed class DspUpdateChecker
         _catalog = catalog;
     }
 
+    /// <summary>v0.6.4: Callback der die aktuell physisch installierten
+    /// Mod-Keys liefert (BuildKey pro <see cref="DspMod.Name"/>). Der Checker
+    /// filtert damit verwaiste Manifests (User hat DLL manuell geloescht,
+    /// Manifest blieb → Phantom-Update-Badge). Wenn null gelassen, wird
+    /// nicht gefiltert (Rueckwaerts-Kompatibilitaet mit v0.6.3-Callsites).</summary>
+    public Func<HashSet<string>>? InstalledKeysProvider { get; set; }
+
     public IReadOnlyList<DspUpdateCandidate> Pending => _pending;
     public int PendingCount => _pending.Count;
     public DateTime LastCheckUtc => _lastCheckUtc;
@@ -56,7 +63,24 @@ public sealed class DspUpdateChecker
             return 0;
         }
 
-        var installed = _manifests.LoadAll()
+        var manifestEntries = _manifests.LoadAll();
+
+        // v0.6.4: verwaiste Manifests garbagen (Mod-DLL nicht mehr da).
+        // Ohne das bleiben Test-Installs / manuelle Deletes ewig als
+        // Phantom-Update-Kandidaten im Store.
+        var installedKeys = InstalledKeysProvider?.Invoke();
+        if (installedKeys is not null)
+        {
+            foreach (var (key, _) in manifestEntries)
+            {
+                if (installedKeys.Contains(key)) continue;
+                Log.Info("Manifest-GC: verwaistes Install-Manifest '{Key}' geloescht (Mod nicht mehr installiert)", key);
+                _manifests.Delete(key);
+            }
+            manifestEntries = manifestEntries.Where(x => installedKeys.Contains(x.Key)).ToList();
+        }
+
+        var installed = manifestEntries
             .Where(x => x.Manifest.NexusModId is not null
                 && !string.IsNullOrWhiteSpace(x.Manifest.NexusVersion))
             .ToList();

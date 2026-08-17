@@ -20,9 +20,14 @@ public sealed class DysonSphereProgramPlugin : IGameModPlugin, IUpdateNotifier
     public PluginMetadata Metadata { get; } = new(
         Id: "kroste.dysonsphereprogram",
         DisplayName: "Dyson Sphere Program Mod-Manager",
-        Version: "0.6.3",
+        Version: "0.6.4",
         Author: "Kroste",
-        Description: "Mod-Verwaltung für Dyson Sphere Program. v0.6.3: Detail-" +
+        Description: "Mod-Verwaltung für Dyson Sphere Program. v0.6.4: " +
+            "Update-Checker filtert verwaiste Install-Manifests (Mod-DLL nicht " +
+            "mehr auf der Platte → Manifest wird geloescht statt als Phantom-" +
+            "Update-Kandidat weiter zu koennen). Fixt den grauen ↑-Badge auf " +
+            "DSP-Kacheln obwohl gar keine Mods installiert sind (Test-Install-" +
+            "Reste, manuell geloeschte DLLs). v0.6.3: Detail-" +
             "Dialog rendert Rich-HTML via _host.Descriptions.CreateRichView (Host " +
             "v1.21 HtmlRenderer-Baukasten) — Bold/Italic/Farben/Bilder/Listen inline " +
             "sichtbar statt Plain-Text-Wall. Plain-Text bleibt fuer KI-Prompts. " +
@@ -77,6 +82,23 @@ public sealed class DysonSphereProgramPlugin : IGameModPlugin, IUpdateNotifier
         _manifests = new DspInstallManifestStore(host);
         _zipInstaller = new DspZipInstaller(_manifests);
         _updateChecker = new DspUpdateChecker(_manifests, _catalog);
+        // v0.6.4: dem UpdateChecker die Liste aktuell installierter Mods
+        // liefern — er filtert damit verwaiste Manifests (User loeschte
+        // die DLL manuell, Manifest blieb → Phantom-Update-Badge).
+        _updateChecker.InstalledKeysProvider = () =>
+        {
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var g in _activatedGames)
+            {
+                try
+                {
+                    foreach (var mod in _scanner.ScanAll(g))
+                        keys.Add(DspInstallManifestStore.BuildKey(mod.Name));
+                }
+                catch (Exception ex) { host.Logger.Debug(ex, "Scan fuer Manifest-GC fehlgeschlagen: {Dir}", g.InstallDir); }
+            }
+            return keys;
+        };
         _covers = new CoverCache(host.CreateHttpClient("dsp-covers"), host);
         _bus = new DownloadEventBus();
         _bootstrapper = new BepInExBootstrapper(host.CreateHttpClient("dsp-bepinex-bootstrap"));
