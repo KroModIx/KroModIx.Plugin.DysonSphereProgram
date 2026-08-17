@@ -20,16 +20,16 @@ public sealed class DysonSphereProgramPlugin : IGameModPlugin, IUpdateNotifier
     public PluginMetadata Metadata { get; } = new(
         Id: "kroste.dysonsphereprogram",
         DisplayName: "Dyson Sphere Program Mod-Manager",
-        Version: "0.6.0",
+        Version: "0.6.1",
         Author: "Kroste",
-        Description: "Mod-Verwaltung für Dyson Sphere Program. v0.6.0: " +
-            "Row-Konsistenz in allen drei Tabs (Cover/Autor/Version/Summary + " +
-            "Details-Button + Doppelklick oeffnet Detail-Dialog). Downloads/Installed " +
-            "reichern via NexusFileNameParser + InstallManifest an. v0.5.0: Nexus- " +
-            "Detail-Dialog + KI-Zusammenfassung. v0.4.0: IUpdateNotifier + Install- " +
-            "Manifest. v0.3.0: zentraler Host-Image-Decoder. BepInEx-Auto-Install-" +
-            "Assistent, Nexus-Voll-Katalog via GraphQL, SharpCompress-Auto-Layout- " +
-            "Install. DE+EN. Async Refresh (kein UI-Freeze).");
+        Description: "Mod-Verwaltung für Dyson Sphere Program. v0.6.1: " +
+            "NexusFileNameParser matcht jetzt das reale DSP-Dash-Format (Locale-15-1-0- " +
+            "1703155833.7z) + .rar + .7z — vorher nur ISO-Space-Format → Cover/Details " +
+            "waren in Downloads/Installed leer. Stale-Manifest-Repair haengt sich " +
+            "beim ersten Refresh nach Update an alte NexusModId=null-Manifests. " +
+            "v0.6.0: Row-Konsistenz in allen drei Tabs. v0.5.0: Nexus-Detail-Dialog + KI. " +
+            "v0.4.0: IUpdateNotifier + Install-Manifest. v0.3.0: Host-Image-Decoder. " +
+            "BepInEx-Auto-Install-Assistent. DE+EN.");
 
     public IReadOnlyList<GameTarget> Targets { get; } = new[]
     {

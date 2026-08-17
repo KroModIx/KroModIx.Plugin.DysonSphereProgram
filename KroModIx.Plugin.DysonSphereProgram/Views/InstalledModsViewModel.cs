@@ -138,8 +138,27 @@ public sealed partial class InstalledModsViewModel : ObservableObject, IDisposab
         var manifest = _manifests.TryGet(key);
         if (manifest is not null)
         {
-            row.NexusModId = manifest.NexusModId;
-            row.NexusVersion = manifest.NexusVersion ?? "";
+            var modId = manifest.NexusModId;
+            var version = manifest.NexusVersion;
+            // v0.6.1: Stale-Manifest-Repair. Pre-v0.6.1 InstallManifests haben
+            // NexusModId=null persistiert, weil der alte Parser das Dash-Format
+            // nicht matchte. Wenn OriginalFilename da ist, jetzt mit dem
+            // erweiterten Parser nachfassen — und das Manifest gleich fixen.
+            if (modId is null && !string.IsNullOrWhiteSpace(manifest.OriginalFilename))
+            {
+                modId = NexusFileNameParser.TryExtractModId(manifest.OriginalFilename);
+                version ??= NexusFileNameParser.TryExtractVersion(manifest.OriginalFilename);
+                if (modId is not null)
+                {
+                    _manifests.Save(key, new DspInstallManifest(
+                        NexusModId: modId,
+                        OriginalFilename: manifest.OriginalFilename,
+                        NexusVersion: version,
+                        InstalledAtUtc: manifest.InstalledAtUtc));
+                }
+            }
+            row.NexusModId = modId;
+            row.NexusVersion = version ?? "";
         }
         return row;
     }
