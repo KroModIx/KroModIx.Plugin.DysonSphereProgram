@@ -2,12 +2,12 @@
   "schema": 1,
   "id": "kroste.dysonsphereprogram",
   "displayName": "Dyson Sphere Program Mod-Manager",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "author": "Kroste",
-  "description": "Mod-Manager für Dyson Sphere Program (Youthcat Studio). v0.6.4: Update-Checker filtert verwaiste Install-Manifests (Mod-DLL nicht mehr auf der Platte → Manifest wird geloescht statt als Phantom-Update-Kandidat weiter zu koennen). Fixt den gruenen ↑-Badge auf DSP-Kacheln obwohl gar keine Mods installiert sind. v0.6.3: Detail-Dialog rendert Rich-HTML via _host.Descriptions.CreateRichView (Host v1.21 HtmlRenderer-Baukasten) — Bold/Italic/Farben/Bilder/Listen inline sichtbar statt Plain-Text-Wall. Plain-Text bleibt fuer KI-Prompts. v0.6.2: HTML/BBCode-Description-Parser aus _host.Descriptions (zentraler Baukasten Contracts v1.19). v0.6.1: NexusFileNameParser matcht jetzt das reale DSP-CDN-Dash-Format (Locale-15-1-0-1703155833.7z) + .rar/.7z — vorher nur ISO-Space-Format → Cover + Details in Downloads/Installed waren leer. Stale-Manifest-Repair patcht existierende Installs beim naechsten Refresh. v0.6.0: Row-Konsistenz in allen drei Tabs. v0.5.0: Nexus-Detail-Dialog mit KI. v0.4.0: IUpdateNotifier + Install-Manifest. BepInEx-Auto-Install-Assistent. DE+EN.",
+  "description": "Mod-Manager für Dyson Sphere Program (Youthcat Studio). v0.6.5: Snapshot des BepInEx/-Verzeichnisses via _host.Backup (Contracts v1.23) VOR jedem Install (Row + Bulk). Restore ueber die Host-Backups-UI (Sidebar-Kontextmenue). keepLast=10 haelt die Historie klein. v0.6.4: Update-Checker filtert verwaiste Install-Manifests (Mod-DLL nicht mehr auf der Platte → Manifest wird geloescht statt als Phantom-Update-Kandidat weiter zu koennen). v0.6.3: Detail-Dialog rendert Rich-HTML via _host.Descriptions.CreateRichView (Host v1.21 HtmlRenderer-Baukasten) — Bold/Italic/Farben/Bilder/Listen inline sichtbar statt Plain-Text-Wall. Plain-Text bleibt fuer KI-Prompts. v0.6.2: HTML/BBCode-Description-Parser aus _host.Descriptions (zentraler Baukasten Contracts v1.19). v0.6.1: NexusFileNameParser matcht jetzt das reale DSP-CDN-Dash-Format (Locale-15-1-0-1703155833.7z) + .rar/.7z — vorher nur ISO-Space-Format → Cover + Details in Downloads/Installed waren leer. Stale-Manifest-Repair patcht existierende Installs beim naechsten Refresh. v0.6.0: Row-Konsistenz in allen drei Tabs. v0.5.0: Nexus-Detail-Dialog mit KI. v0.4.0: IUpdateNotifier + Install-Manifest. BepInEx-Auto-Install-Assistent. DE+EN.",
   "assembly": "KroModIx.Plugin.DysonSphereProgram.dll",
   "entryType": "KroModIx.Plugin.DysonSphereProgram.DysonSphereProgramPlugin",
-  "minHostVersion": "1.21.0",
+  "minHostVersion": "1.23.0",
   "targets": [
     {
       "gameId": "dyson-sphere-program",

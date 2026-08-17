@@ -20,9 +20,15 @@ public sealed class DysonSphereProgramPlugin : IGameModPlugin, IUpdateNotifier
     public PluginMetadata Metadata { get; } = new(
         Id: "kroste.dysonsphereprogram",
         DisplayName: "Dyson Sphere Program Mod-Manager",
-        Version: "0.6.4",
+        Version: "0.6.5",
         Author: "Kroste",
-        Description: "Mod-Verwaltung für Dyson Sphere Program. v0.6.4: " +
+        Description: "Mod-Verwaltung für Dyson Sphere Program. v0.6.5: " +
+            "Snapshot des BepInEx/-Verzeichnisses via _host.Backup (Contracts " +
+            "v1.23) VOR jedem Install (Row + Bulk). Kein automatischer Rollback " +
+            "— Restore laeuft ueber die Host-Backups-UI (Sidebar-Kontextmenue) " +
+            "damit der User bewusst entscheidet. keepLast=10 haelt die Historie " +
+            "klein. Snapshot-Fehler blockieren den Install nicht (Log only). " +
+            "v0.6.4: " +
             "Update-Checker filtert verwaiste Install-Manifests (Mod-DLL nicht " +
             "mehr auf der Platte → Manifest wird geloescht statt als Phantom-" +
             "Update-Kandidat weiter zu koennen). Fixt den grauen ↑-Badge auf " +

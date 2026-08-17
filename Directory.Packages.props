@@ -1,12 +1,13 @@
 <Project>
   <ItemGroup>
-    <!-- v1.21.0: IDescriptionParser.ToHtml + CreateRichView (HtmlPanel via
-         Avalonia.HtmlRenderer) — Plugin rendert die Nexus-Beschreibung
-         jetzt als Rich-HTML mit Bold/Italic/Farben/Bildern/Listen statt
-         Plain-Text-Wall. v1.20.0: IDescriptionParser (zentraler HTML+BBCode-
-         Parser) via _host.Descriptions. v1.18.0: IImageDecoder (zentraler
-         Bild-Decoder mit ffmpeg-Chain fuer WebP/AVIF/DDS/HEIC). -->
-    <PackageVersion Include="KroModIx.Plugin.Contracts" Version="1.21.0" />
+    <!-- v1.23.0: IBackupService (Snapshot als ZIP unter ~/.local/share/
+         KroModIx/backups/<pluginId>/) — DSP macht Snapshot vor jedem
+         Install. v1.21.0: IDescriptionParser.ToHtml + CreateRichView
+         (HtmlPanel via Avalonia.HtmlRenderer). v1.20.0: IDescriptionParser
+         (zentraler HTML+BBCode-Parser) via _host.Descriptions. v1.18.0:
+         IImageDecoder (zentraler Bild-Decoder mit ffmpeg-Chain fuer
+         WebP/AVIF/DDS/HEIC). -->
+    <PackageVersion Include="KroModIx.Plugin.Contracts" Version="1.23.0" />
     <PackageVersion Include="Avalonia" Version="12.1.0" />
     <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageVersion Include="MinVer" Version="7.0.0" />

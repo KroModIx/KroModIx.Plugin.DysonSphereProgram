@@ -112,7 +112,9 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
         {
             IsBusy = true;
             using var scope = _host.BeginProgress($"Install: {row.FileName}");
-            scope.Report(0, "Extract …");
+            scope.Report(0, "Snapshot …");
+            await TrySnapshotAsync($"Vor Install: {row.FileName}");
+            scope.Report(0.3, "Extract …");
             var result = await Task.Run(() => _installer.Install(row.FilePath, _game));
             scope.Report(1.0, "OK");
             _host.Notifications.Notify(
@@ -140,6 +142,11 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
         int done = 0, failed = 0;
         using var scope = _host.BeginProgress(string.Format(Strings.T("progress.install_zips"), Rows.Count));
         var snapshot = Rows.ToList();
+        // v0.6.5: EIN Snapshot vor der ganzen Bulk-Runde — Rollback bringt
+        // den User dann zurueck auf den Stand VOR dem Batch. Snapshot pro
+        // Row waere Overkill (n ZIPs) und semantisch daneben.
+        scope.Report(0, "Snapshot …");
+        await TrySnapshotAsync($"Vor Bulk-Install ({snapshot.Count} Archive)");
         foreach (var row in snapshot)
         {
             scope.Report((double)(done + failed) / snapshot.Count,
@@ -155,6 +162,38 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
             string.Format(Strings.T("notify.bulk_install_result"), done, failed),
             failed == 0 ? NotificationLevel.Success : NotificationLevel.Warning);
         _bus.RaiseModInstalled();
+    }
+
+    /// <summary>v0.6.5: Snapshot vom aktuellen BepInEx-Zustand via
+    /// <see cref="IHostServices.Backup"/> (Contracts v1.23). Sichert das
+    /// gesamte <c>BepInEx/</c>-Verzeichnis (nicht nur plugins/, damit
+    /// auch Config/-Rueckstaende + core/ mitkommen die von Install
+    /// veraendert werden koennen). Fehler nur ins Log — Install darf
+    /// nicht daran scheitern dass der Snapshot fehlschlaegt. Alte
+    /// Snapshots werden auf keepLast=10 geprunt.</summary>
+    private async Task TrySnapshotAsync(string label)
+    {
+        try
+        {
+            var bepinex = Path.Combine(_game.InstallDir, "BepInEx");
+            if (!Directory.Exists(bepinex))
+            {
+                _host.Logger.Debug("BepInEx/ existiert nicht — kein Snapshot noetig");
+                return;
+            }
+            var gameKey = _game.Target.SteamAppId is int a
+                ? $"steam:{a}" : _game.InstallDir;
+            await _host.Backup.CreateSnapshotAsync(
+                pluginId: "kroste.dysonsphereprogram",
+                gameKey: gameKey,
+                directories: new[] { bepinex },
+                label: label);
+            await _host.Backup.PruneAsync("kroste.dysonsphereprogram", gameKey, keepLast: 10);
+        }
+        catch (Exception ex)
+        {
+            _host.Logger.Warn(ex, "Snapshot fehlgeschlagen (Install laeuft trotzdem): {Label}", label);
+        }
     }
 
     [RelayCommand]
