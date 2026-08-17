@@ -177,10 +177,18 @@ public sealed class NexusView : UserControl
         });
         openBtn.Bind(Button.CommandParameterProperty, new Binding("."));
 
+        var detailBtn = new Button { Content = Strings.T("btn.details") };
+        detailBtn.Bind(Button.CommandProperty, new Binding
+        {
+            RelativeSource = new RelativeSource { Mode = RelativeSourceMode.FindAncestor, AncestorType = typeof(ListBox) },
+            Path = "DataContext." + nameof(NexusViewModel.ShowDetailCommand),
+        });
+        detailBtn.Bind(Button.CommandParameterProperty, new Binding("."));
+
         var actions = new StackPanel
         {
             Spacing = 6, VerticalAlignment = VerticalAlignment.Center,
-            Children = { download, openBtn },
+            Children = { download, detailBtn, openBtn },
         };
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };

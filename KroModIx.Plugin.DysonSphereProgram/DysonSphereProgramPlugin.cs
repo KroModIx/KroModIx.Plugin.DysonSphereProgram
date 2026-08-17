@@ -20,7 +20,7 @@ public sealed class DysonSphereProgramPlugin : IGameModPlugin, IUpdateNotifier
     public PluginMetadata Metadata { get; } = new(
         Id: "kroste.dysonsphereprogram",
         DisplayName: "Dyson Sphere Program Mod-Manager",
-        Version: "0.4.0",
+        Version: "0.5.0",
         Author: "Kroste",
         Description: "Mod-Verwaltung für Dyson Sphere Program. " +
             "v0.2.0: Drei Tabs (Installiert / Nexus-Katalog / Downloads), " +
