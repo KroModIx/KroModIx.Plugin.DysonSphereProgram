@@ -80,6 +80,13 @@ public sealed class NexusView : UserControl
         };
         list.Bind(ListBox.ItemsSourceProperty, new Binding(nameof(NexusViewModel.Rows)));
         list.ItemTemplate = new FuncDataTemplate<NexusRow>((r, _) => r is null ? null : BuildRowCard(), true);
+        // Doppelklick auf eine Row oeffnet Detail-Dialog — Kernprinzip
+        // „Row-Interaction" aus dem KroModIx-Plugin-Skill.
+        list.DoubleTapped += (_, _) =>
+        {
+            if (list.DataContext is NexusViewModel vm && list.SelectedItem is NexusRow row)
+                vm.ShowDetailCommand.Execute(row);
+        };
 
         var loadMore = new Button { Content = Strings.T("btn.load_more") };
         loadMore.HorizontalAlignment = HorizontalAlignment.Center;

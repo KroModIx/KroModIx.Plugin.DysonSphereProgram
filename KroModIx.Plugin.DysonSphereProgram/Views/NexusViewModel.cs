@@ -268,11 +268,7 @@ public sealed partial class NexusViewModel : ObservableObject, IDisposable
     private void ShowDetail(NexusRow? row)
     {
         if (row is null) return;
-        var vm = new NexusModDetailViewModel(row, _nexus, _covers, _host);
-        var window = new NexusModDetailWindow { DataContext = vm };
-        var owner = (Avalonia.Application.Current?.ApplicationLifetime
-            as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
-        if (owner is not null) window.Show(owner); else window.Show();
+        DspNexusDetailLauncher.Show(row, _nexus, _covers, _host);
     }
 
     [RelayCommand]

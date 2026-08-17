@@ -20,15 +20,16 @@ public sealed class DysonSphereProgramPlugin : IGameModPlugin, IUpdateNotifier
     public PluginMetadata Metadata { get; } = new(
         Id: "kroste.dysonsphereprogram",
         DisplayName: "Dyson Sphere Program Mod-Manager",
-        Version: "0.5.0",
+        Version: "0.6.0",
         Author: "Kroste",
-        Description: "Mod-Verwaltung für Dyson Sphere Program. " +
-            "v0.2.0: Drei Tabs (Installiert / Nexus-Katalog / Downloads), " +
-            "BepInEx-Auto-Install-Assistent (Direct-Download vom offiziellen " +
-            "BepInEx-GitHub-Release), Nexus-Voll-Katalog via GraphQL (Sort + " +
-            "Search + Kategorie-Filter), SharpCompress-Auto-Layout-Install " +
-            "(BepInEx/plugins/-, Flat- oder Ordner-Layout). Nexus-Downloads " +
-            "sind Premium (analog Cyberpunk). DE+EN. Async Refresh (kein UI-Freeze).");
+        Description: "Mod-Verwaltung für Dyson Sphere Program. v0.6.0: " +
+            "Row-Konsistenz in allen drei Tabs (Cover/Autor/Version/Summary + " +
+            "Details-Button + Doppelklick oeffnet Detail-Dialog). Downloads/Installed " +
+            "reichern via NexusFileNameParser + InstallManifest an. v0.5.0: Nexus- " +
+            "Detail-Dialog + KI-Zusammenfassung. v0.4.0: IUpdateNotifier + Install- " +
+            "Manifest. v0.3.0: zentraler Host-Image-Decoder. BepInEx-Auto-Install-" +
+            "Assistent, Nexus-Voll-Katalog via GraphQL, SharpCompress-Auto-Layout- " +
+            "Install. DE+EN. Async Refresh (kein UI-Freeze).");
 
     public IReadOnlyList<GameTarget> Targets { get; } = new[]
     {
@@ -53,6 +54,7 @@ public sealed class DysonSphereProgramPlugin : IGameModPlugin, IUpdateNotifier
     private CoverCache? _covers;
     private DownloadEventBus? _bus;
     private BepInExBootstrapper? _bootstrapper;
+    private DspNexusRowEnricher? _enricher;
     private IReadOnlyList<DetectedGame> _activatedGames = Array.Empty<DetectedGame>();
 
     public Task InitializeAsync(IHostServices host,
@@ -73,6 +75,7 @@ public sealed class DysonSphereProgramPlugin : IGameModPlugin, IUpdateNotifier
         _covers = new CoverCache(host.CreateHttpClient("dsp-covers"), host);
         _bus = new DownloadEventBus();
         _bootstrapper = new BepInExBootstrapper(host.CreateHttpClient("dsp-bepinex-bootstrap"));
+        _enricher = new DspNexusRowEnricher(host.Nexus, _covers, host);
         _activatedGames = activatedGames;
 
         // v0.4: Auto-Update-Check nach 15s Bootstrap-Delay (analog Cyberpunk).
@@ -109,11 +112,14 @@ public sealed class DysonSphereProgramPlugin : IGameModPlugin, IUpdateNotifier
     {
         if (_host is null || _paths is null || _scanner is null || _installer is null
             || _pluginPaths is null || _catalog is null || _downloader is null
-            || _zipInstaller is null || _covers is null || _bus is null || _bootstrapper is null)
+            || _zipInstaller is null || _covers is null || _bus is null || _bootstrapper is null
+            || _manifests is null || _enricher is null)
             yield break;
-        yield return new InstalledTab(game, _scanner, _installer, _paths, _bootstrapper, _bus, _host);
+        yield return new InstalledTab(game, _scanner, _installer, _paths, _bootstrapper, _bus,
+            _manifests, _host.Nexus, _covers, _enricher, _host);
         yield return new NexusTab(_catalog, _covers, _host.Nexus, _downloader, _bus, _host);
-        yield return new DownloadsTab(game, _pluginPaths, _zipInstaller, _bus, _host);
+        yield return new DownloadsTab(game, _pluginPaths, _zipInstaller, _bus,
+            _host.Nexus, _covers, _enricher, _host);
     }
 
     public Task ShutdownAsync()
@@ -149,13 +155,20 @@ public sealed class DysonSphereProgramPlugin : IGameModPlugin, IUpdateNotifier
         private readonly DspPathResolver _paths;
         private readonly BepInExBootstrapper _bootstrapper;
         private readonly DownloadEventBus _bus;
+        private readonly DspInstallManifestStore _manifests;
+        private readonly INexusService _nexus;
+        private readonly CoverCache _covers;
+        private readonly DspNexusRowEnricher _enricher;
         private readonly IHostServices _host;
 
         public InstalledTab(DetectedGame game, BepInExScanner scanner,
             DspInstallService installer, DspPathResolver paths,
-            BepInExBootstrapper bootstrapper, DownloadEventBus bus, IHostServices host)
+            BepInExBootstrapper bootstrapper, DownloadEventBus bus,
+            DspInstallManifestStore manifests, INexusService nexus,
+            CoverCache covers, DspNexusRowEnricher enricher, IHostServices host)
         { _game = game; _scanner = scanner; _installer = installer; _paths = paths;
-          _bootstrapper = bootstrapper; _bus = bus; _host = host; }
+          _bootstrapper = bootstrapper; _bus = bus; _manifests = manifests;
+          _nexus = nexus; _covers = covers; _enricher = enricher; _host = host; }
 
         public string Id => "installed";
         public string Label => Strings.T("tab.installed");
@@ -166,7 +179,7 @@ public sealed class DysonSphereProgramPlugin : IGameModPlugin, IUpdateNotifier
             new InstalledModsView
             {
                 DataContext = new InstalledModsViewModel(_game, _scanner, _installer, _paths,
-                    _bootstrapper, _bus, _host),
+                    _bootstrapper, _bus, _manifests, _nexus, _covers, _enricher, _host),
             };
     }
 
@@ -202,11 +215,16 @@ public sealed class DysonSphereProgramPlugin : IGameModPlugin, IUpdateNotifier
         private readonly DspPaths _paths;
         private readonly DspZipInstaller _installer;
         private readonly DownloadEventBus _bus;
+        private readonly INexusService _nexus;
+        private readonly CoverCache _covers;
+        private readonly DspNexusRowEnricher _enricher;
         private readonly IHostServices _host;
 
         public DownloadsTab(DetectedGame game, DspPaths paths, DspZipInstaller installer,
-            DownloadEventBus bus, IHostServices host)
-        { _game = game; _paths = paths; _installer = installer; _bus = bus; _host = host; }
+            DownloadEventBus bus, INexusService nexus, CoverCache covers,
+            DspNexusRowEnricher enricher, IHostServices host)
+        { _game = game; _paths = paths; _installer = installer; _bus = bus;
+          _nexus = nexus; _covers = covers; _enricher = enricher; _host = host; }
 
         public string Id => "downloads";
         public string Label => Strings.T("tab.downloads");
@@ -216,7 +234,8 @@ public sealed class DysonSphereProgramPlugin : IGameModPlugin, IUpdateNotifier
         public Control CreateView(DetectedGame game, IHostServices host) =>
             new DownloadsView
             {
-                DataContext = new DownloadsViewModel(_game, _paths, _installer, _bus, _host),
+                DataContext = new DownloadsViewModel(_game, _paths, _installer, _bus,
+                    _nexus, _covers, _enricher, _host),
             };
     }
 }

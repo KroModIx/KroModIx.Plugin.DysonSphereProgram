@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -15,7 +17,13 @@ namespace KroModIx.Plugin.DysonSphereProgram.Views;
 /// <summary>Downloads-Tab: listet Archive im Plugin-Downloads-Ordner,
 /// bietet Install + Delete + Bulk-Install. ZIP/RAR/7z via SharpCompress.
 /// Auto-Layout-Detection entscheidet zwischen direktem Extract vs
-/// BepInEx/plugins/&lt;Root&gt;/-Wrap.</summary>
+/// BepInEx/plugins/&lt;Root&gt;/-Wrap.
+///
+/// <para>v0.6: Rows sind vollwertige Mod-Ansichten mit Cover/Author/
+/// Summary aus dem Nexus-Katalog (via <see cref="NexusFileNameParser"/> +
+/// <see cref="DspNexusRowEnricher"/>). Doppelklick + Details-Button oeffnen
+/// das gleiche <see cref="NexusModDetailWindow"/> wie der Katalog-Tab —
+/// Kernprinzip 6/7 aus dem KroModIx-Plugin-Skill.</para></summary>
 public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
 {
     private readonly DetectedGame _game;
@@ -23,7 +31,11 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     private readonly DspZipInstaller _installer;
     private readonly DownloadEventBus _bus;
     private readonly IHostServices _host;
+    private readonly INexusService _nexus;
+    private readonly CoverCache _covers;
+    private readonly DspNexusRowEnricher _enricher;
     private readonly EventHandler<string?> _downloadHandler;
+    private CancellationTokenSource _enrichCts = new();
 
     [ObservableProperty] private string _statusText = "";
     [ObservableProperty] private bool _isBusy;
@@ -31,19 +43,28 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     public ObservableCollection<DownloadRow> Rows { get; } = new();
 
     public DownloadsViewModel(DetectedGame game, DspPaths paths,
-        DspZipInstaller installer, DownloadEventBus bus, IHostServices host)
+        DspZipInstaller installer, DownloadEventBus bus,
+        INexusService nexus, CoverCache covers, DspNexusRowEnricher enricher,
+        IHostServices host)
     {
-        _game = game; _paths = paths; _installer = installer; _bus = bus; _host = host;
+        _game = game; _paths = paths; _installer = installer; _bus = bus;
+        _nexus = nexus; _covers = covers; _enricher = enricher; _host = host;
         _downloadHandler = (_, _) => Dispatcher.UIThread.Post(Refresh);
         _bus.DownloadsChanged += _downloadHandler;
         Refresh();
     }
 
-    public void Dispose() => _bus.DownloadsChanged -= _downloadHandler;
+    public void Dispose()
+    {
+        _bus.DownloadsChanged -= _downloadHandler;
+        try { _enrichCts.Cancel(); } catch { }
+    }
 
     [RelayCommand]
     private void Refresh()
     {
+        try { _enrichCts.Cancel(); } catch { }
+        _enrichCts = new CancellationTokenSource();
         Rows.Clear();
         if (!Directory.Exists(_paths.DownloadsDir))
         {
@@ -58,15 +79,30 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
         foreach (var f in files)
         {
             var info = new FileInfo(f);
-            Rows.Add(new DownloadRow(f, info.Name, info.Length, info.LastWriteTimeUtc));
+            var row = new DownloadRow(f, info.Name, info.Length, info.LastWriteTimeUtc)
+            {
+                NexusModId = NexusFileNameParser.TryExtractModId(info.Name),
+                NexusName = NexusFileNameParser.TryExtractModName(info.Name) ?? "",
+                NexusVersion = NexusFileNameParser.TryExtractVersion(info.Name) ?? "",
+            };
+            Rows.Add(row);
         }
         StatusText = files.Count == 0
             ? string.Format(Strings.T("status.no_zips_hint"), _paths.DownloadsDir)
             : string.Format(Strings.T("status.zips_ready"), files.Count);
+
+        _ = _enricher.EnrichBatchAsync(Rows.ToList(), _enrichCts.Token);
     }
 
     [RelayCommand]
     private void OpenDownloadsFolder() => _host.Shell.OpenDirectory(_paths.DownloadsDir);
+
+    [RelayCommand]
+    private void ShowDetail(DownloadRow? row)
+    {
+        if (row?.NexusModId is not int modId) return;
+        DspNexusDetailLauncher.Show(modId, row.Cover, _nexus, _covers, _host);
+    }
 
     [RelayCommand]
     private async Task InstallRowAsync(DownloadRow? row)
@@ -135,8 +171,48 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     }
 }
 
-public sealed record DownloadRow(string FilePath, string FileName, long SizeBytes, DateTime DownloadedUtc)
+public sealed partial class DownloadRow : ObservableObject, IDspEnrichableRow
 {
+    public DownloadRow(string filePath, string fileName, long sizeBytes, DateTime downloadedUtc)
+    {
+        FilePath = filePath;
+        FileName = fileName;
+        SizeBytes = sizeBytes;
+        DownloadedUtc = downloadedUtc;
+    }
+
+    public string FilePath { get; }
+    public string FileName { get; }
+    public long SizeBytes { get; }
+    public DateTime DownloadedUtc { get; }
+
+    // ---- IDspEnrichableRow ----
+    public int? NexusModId { get; set; }
+    public bool IsEnriched { get; set; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasCover))]
+    [NotifyPropertyChangedFor(nameof(NoCover))]
+    private Bitmap? _cover;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DisplayName))]
+    private string _nexusName = "";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SubtitleText))]
+    private string _nexusAuthor = "";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SubtitleText))]
+    private string _nexusVersion = "";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSummary))]
+    private string _nexusSummary = "";
+    [ObservableProperty] private bool _hasNexusMatch;
+
+    public bool HasCover => Cover is not null;
+    public bool NoCover => Cover is null;
+    public bool HasSummary => !string.IsNullOrWhiteSpace(NexusSummary);
+
+    public string DisplayName => string.IsNullOrWhiteSpace(NexusName) ? FileName : NexusName;
+
     public string SizeText => SizeBytes switch
     {
         < 1024 => $"{SizeBytes} B",
@@ -144,5 +220,18 @@ public sealed record DownloadRow(string FilePath, string FileName, long SizeByte
         < 1024L * 1024 * 1024 => $"{SizeBytes / (1024.0 * 1024):F1} MB",
         _ => $"{SizeBytes / (1024.0 * 1024 * 1024):F2} GB",
     };
-    public string SubtitleText => $"{SizeText} · {DownloadedUtc.ToLocalTime():yyyy-MM-dd HH:mm}";
+
+    public string SubtitleText
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(NexusAuthor)) parts.Add(NexusAuthor);
+            var v = NexusVersion?.Trim() ?? "";
+            if (v.Length > 0) parts.Add(char.IsDigit(v[0]) ? "v" + v : v);
+            parts.Add(SizeText);
+            parts.Add(DownloadedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"));
+            return string.Join(" · ", parts);
+        }
+    }
 }

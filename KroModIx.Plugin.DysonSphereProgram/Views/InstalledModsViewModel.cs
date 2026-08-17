@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -14,7 +16,13 @@ namespace KroModIx.Plugin.DysonSphereProgram.Views;
 /// <summary>Installiert-Tab. Zeigt BepInEx-Plugins. Wenn BepInEx nicht
 /// installiert ist: Bootstrap-Assistent (Nexus/BepInEx-GitHub-Auto-Download).
 /// <para>v0.2: Refresh laeuft off-thread (Kernprinzip 3), BepInEx-Marker
-/// wird lazy per Task.Run gecheckt. Rows-Rebuild danach auf UI-Thread.</para></summary>
+/// wird lazy per Task.Run gecheckt. Rows-Rebuild danach auf UI-Thread.</para>
+///
+/// <para>v0.6: Rows tragen Cover/Author/Version/Summary aus dem
+/// Nexus-Katalog — via <see cref="DspInstallManifestStore"/> (persistierte
+/// ModId zur Install-Zeit) + <see cref="DspNexusRowEnricher"/>. Doppelklick
+/// + Details-Button oeffnen das gleiche <see cref="NexusModDetailWindow"/>
+/// wie der Katalog-Tab. Kernprinzip 6/7 aus dem KroModIx-Plugin-Skill.</para></summary>
 public sealed partial class InstalledModsViewModel : ObservableObject, IDisposable
 {
     private readonly DetectedGame _game;
@@ -23,8 +31,13 @@ public sealed partial class InstalledModsViewModel : ObservableObject, IDisposab
     private readonly DspPathResolver _paths;
     private readonly BepInExBootstrapper _bootstrapper;
     private readonly DownloadEventBus _bus;
+    private readonly DspInstallManifestStore _manifests;
+    private readonly INexusService _nexus;
+    private readonly CoverCache _covers;
+    private readonly DspNexusRowEnricher _enricher;
     private readonly IHostServices _host;
     private readonly EventHandler _installedHandler;
+    private CancellationTokenSource _enrichCts = new();
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(NeedsBepInExBootstrap))]
@@ -44,16 +57,24 @@ public sealed partial class InstalledModsViewModel : ObservableObject, IDisposab
 
     public InstalledModsViewModel(DetectedGame game, BepInExScanner scanner,
         DspInstallService installer, DspPathResolver paths,
-        BepInExBootstrapper bootstrapper, DownloadEventBus bus, IHostServices host)
+        BepInExBootstrapper bootstrapper, DownloadEventBus bus,
+        DspInstallManifestStore manifests, INexusService nexus,
+        CoverCache covers, DspNexusRowEnricher enricher, IHostServices host)
     {
         _game = game; _scanner = scanner; _installer = installer; _paths = paths;
-        _bootstrapper = bootstrapper; _bus = bus; _host = host;
+        _bootstrapper = bootstrapper; _bus = bus;
+        _manifests = manifests; _nexus = nexus; _covers = covers; _enricher = enricher;
+        _host = host;
         _installedHandler = (_, _) => Dispatcher.UIThread.Post(() => _ = RefreshAsync());
         _bus.ModInstalled += _installedHandler;
         _ = RefreshAsync();
     }
 
-    public void Dispose() => _bus.ModInstalled -= _installedHandler;
+    public void Dispose()
+    {
+        _bus.ModInstalled -= _installedHandler;
+        try { _enrichCts.Cancel(); } catch { }
+    }
 
     partial void OnFilterTextChanged(string value) => ApplyFilter();
 
@@ -63,7 +84,7 @@ public sealed partial class InstalledModsViewModel : ObservableObject, IDisposab
         Rows.Clear();
         var matched = string.IsNullOrEmpty(q)
             ? _allRows
-            : _allRows.Where(r => r.Mod.Name.Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
+            : _allRows.Where(r => r.DisplayName.Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
         foreach (var r in matched) Rows.Add(r);
     }
 
@@ -74,6 +95,8 @@ public sealed partial class InstalledModsViewModel : ObservableObject, IDisposab
     [RelayCommand]
     private async Task RefreshAsync()
     {
+        try { _enrichCts.Cancel(); } catch { }
+        _enrichCts = new CancellationTokenSource();
         try
         {
             IsBusy = true;
@@ -93,15 +116,32 @@ public sealed partial class InstalledModsViewModel : ObservableObject, IDisposab
                 Rows.Clear();
                 return;
             }
-            _allRows = mods.Select(m => new ModRow(m)).ToList();
+            _allRows = mods.Select(BuildRow).ToList();
             var enabled = mods.Count(m => m.IsEnabled);
             var disabled = mods.Count - enabled;
             StatusText = mods.Count == 0
                 ? Strings.T("status.no_mods")
                 : string.Format(Strings.T("status.mods_count"), mods.Count, enabled, disabled);
             ApplyFilter();
+
+            _ = _enricher.EnrichBatchAsync(_allRows.ToList(), _enrichCts.Token);
         }
         finally { IsBusy = false; }
+    }
+
+    private ModRow BuildRow(DspMod mod)
+    {
+        var row = new ModRow(mod);
+        // ModId aus persistiertem InstallManifest ziehen — beim Install
+        // hat DspZipInstaller den Nexus-Kontext dort abgelegt (v0.4).
+        var key = DspInstallManifestStore.BuildKey(mod.Name);
+        var manifest = _manifests.TryGet(key);
+        if (manifest is not null)
+        {
+            row.NexusModId = manifest.NexusModId;
+            row.NexusVersion = manifest.NexusVersion ?? "";
+        }
+        return row;
     }
 
     [RelayCommand]
@@ -109,6 +149,13 @@ public sealed partial class InstalledModsViewModel : ObservableObject, IDisposab
     {
         var dir = _paths.GetPluginsDir(_game);
         _host.Shell.OpenDirectory(dir);
+    }
+
+    [RelayCommand]
+    private void ShowDetail(ModRow? row)
+    {
+        if (row?.NexusModId is not int modId) return;
+        DspNexusDetailLauncher.Show(modId, row.Cover, _nexus, _covers, _host);
     }
 
     [RelayCommand]
@@ -186,7 +233,6 @@ public sealed partial class InstalledModsViewModel : ObservableObject, IDisposab
             _host.Logger.Warn(ex, "Uninstall fehlgeschlagen: {Name}", row.Mod.Name);
             await _host.Dialogs.ShowMessageAsync("Fehler", ex.Message);
         }
-        finally { IsBusy = false; }
     }
 
     [RelayCommand]
@@ -241,10 +287,37 @@ public sealed partial class InstalledModsViewModel : ObservableObject, IDisposab
     }
 }
 
-public sealed partial class ModRow : ObservableObject
+public sealed partial class ModRow : ObservableObject, IDspEnrichableRow
 {
     public ModRow(DspMod mod) => Mod = mod;
     [ObservableProperty] private DspMod _mod;
+
+    // ---- IDspEnrichableRow ----
+    public int? NexusModId { get; set; }
+    public bool IsEnriched { get; set; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasCover))]
+    [NotifyPropertyChangedFor(nameof(NoCover))]
+    private Bitmap? _cover;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DisplayName))]
+    private string _nexusName = "";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SubtitleText))]
+    private string _nexusAuthor = "";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SubtitleText))]
+    private string _nexusVersion = "";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSummary))]
+    private string _nexusSummary = "";
+    [ObservableProperty] private bool _hasNexusMatch;
+
+    public bool HasCover => Cover is not null;
+    public bool NoCover => Cover is null;
+    public bool HasSummary => !string.IsNullOrWhiteSpace(NexusSummary);
+
+    public string DisplayName => string.IsNullOrWhiteSpace(NexusName) ? Mod.Name : NexusName;
 
     public string StatusLabel => Mod.IsEnabled ? Strings.T("row.status_active") : Strings.T("row.status_inactive");
     public string ToggleButtonLabel => Mod.IsEnabled ? Strings.T("btn.disable") : Strings.T("btn.enable");
@@ -260,12 +333,13 @@ public sealed partial class ModRow : ObservableObject
     {
         get
         {
-            var parts = new List<string>
-            {
-                Mod.IsDirectory ? "Ordner" : "DLL",
-                SizeText,
-                Mod.InstalledUtc.ToLocalTime().ToString("yyyy-MM-dd"),
-            };
+            var parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(NexusAuthor)) parts.Add(NexusAuthor);
+            var v = NexusVersion?.Trim() ?? "";
+            if (v.Length > 0) parts.Add(char.IsDigit(v[0]) ? "v" + v : v);
+            parts.Add(Mod.IsDirectory ? "Ordner" : "DLL");
+            parts.Add(SizeText);
+            parts.Add(Mod.InstalledUtc.ToLocalTime().ToString("yyyy-MM-dd"));
             return string.Join(" · ", parts);
         }
     }

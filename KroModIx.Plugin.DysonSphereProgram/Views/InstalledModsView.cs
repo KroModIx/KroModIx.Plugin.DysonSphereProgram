@@ -11,8 +11,10 @@ using KroModIx.Plugin.DysonSphereProgram.Services;
 namespace KroModIx.Plugin.DysonSphereProgram.Views;
 
 /// <summary>Installiert-Tab: Toolbar + Bootstrap-Panel (wenn BepInEx fehlt)
-/// + Row-Liste. Bootstrap-Panel ist zentraler CTA wenn BepInEx nicht da
-/// ist — visuell dominant statt kleine muted-Statuszeile.</summary>
+/// + Row-Liste. v0.6: Row-Layout gleich zu Nexus/Downloads (Cover 140x90
+/// + Titel/Autor/Version/Status/Summary + Details/Toggle/Uninstall).
+/// Doppelklick oeffnet das gleiche Detail-Window wie im Nexus-Tab wenn
+/// eine Nexus-ModId im InstallManifest hinterlegt ist.</summary>
 public sealed class InstalledModsView : UserControl
 {
     public InstalledModsView()
@@ -109,6 +111,11 @@ public sealed class InstalledModsView : UserControl
             row is null ? null : BuildRowCard(), true);
         list.Bind(ListBox.IsVisibleProperty,
             new Binding(nameof(InstalledModsViewModel.BepInExInstalled)));
+        list.DoubleTapped += (_, _) =>
+        {
+            if (list.DataContext is InstalledModsViewModel vm && list.SelectedItem is ModRow row)
+                vm.ShowDetailCommand.Execute(row);
+        };
 
         Content = new DockPanel
         {
@@ -126,32 +133,55 @@ public sealed class InstalledModsView : UserControl
 
     private static Control BuildRowCard()
     {
-        var iconFrame = new Border
+        var coverFrame = new Border
         {
-            Width = 60, Height = 60, CornerRadius = new CornerRadius(6),
+            Width = 140, Height = 90, CornerRadius = new CornerRadius(6),
+            ClipToBounds = true,
             [!Border.BackgroundProperty] = new DynamicResourceExtension("KrosteSurfaceBrush"),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        var icon = new TextBlock
+        var panel = new Panel();
+        var fallback = new TextBlock
         {
-            FontSize = 28,
+            FontSize = 32,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        icon.Classes.Add("muted");
-        icon.Bind(TextBlock.TextProperty, new Binding(nameof(ModRow.TypeIcon)));
-        iconFrame.Child = icon;
+        fallback.Classes.Add("muted");
+        fallback.Bind(TextBlock.TextProperty, new Binding(nameof(ModRow.TypeIcon)));
+        fallback.Bind(TextBlock.IsVisibleProperty, new Binding(nameof(ModRow.NoCover)));
+        panel.Children.Add(fallback);
+        var img = new Image
+        {
+            Stretch = Stretch.UniformToFill,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+        };
+        img.Bind(Image.SourceProperty, new Binding(nameof(ModRow.Cover)));
+        img.Bind(Image.IsVisibleProperty, new Binding(nameof(ModRow.HasCover)));
+        panel.Children.Add(img);
+        coverFrame.Child = panel;
 
         var name = new TextBlock
         {
             FontWeight = FontWeight.SemiBold, FontSize = 14,
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
-        name.Bind(TextBlock.TextProperty, new Binding("Mod.Name"));
+        name.Bind(TextBlock.TextProperty, new Binding(nameof(ModRow.DisplayName)));
 
         var subtitle = new TextBlock { FontSize = 11 };
         subtitle.Classes.Add("muted");
         subtitle.Bind(TextBlock.TextProperty, new Binding(nameof(ModRow.SubtitleText)));
+
+        var summary = new TextBlock
+        {
+            Margin = new Thickness(0, 4, 0, 0),
+            TextWrapping = TextWrapping.Wrap,
+            MaxHeight = 40,
+        };
+        summary.Classes.Add("secondary");
+        summary.Bind(TextBlock.TextProperty, new Binding(nameof(ModRow.NexusSummary)));
+        summary.Bind(TextBlock.IsVisibleProperty, new Binding(nameof(ModRow.HasSummary)));
 
         var status = new TextBlock
         {
@@ -164,12 +194,16 @@ public sealed class InstalledModsView : UserControl
         {
             Spacing = 2, VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(14, 0, 0, 0),
-            Children = { name, subtitle, status },
+            Children = { name, subtitle, summary, status },
         };
 
         var toggleBtn = new Button();
         toggleBtn.Bind(Button.ContentProperty, new Binding(nameof(ModRow.ToggleButtonLabel)));
         BindRowCmd(toggleBtn, nameof(InstalledModsViewModel.ToggleEnabledCommand));
+
+        var detailBtn = new Button { Content = Strings.T("btn.details") };
+        BindRowCmd(detailBtn, nameof(InstalledModsViewModel.ShowDetailCommand));
+        detailBtn.Bind(Button.IsEnabledProperty, new Binding(nameof(ModRow.HasNexusMatch)));
 
         var uninstallBtn = new Button { Content = Strings.T("btn.uninstall") };
         uninstallBtn.Classes.Add("danger");
@@ -178,7 +212,7 @@ public sealed class InstalledModsView : UserControl
         var actions = new StackPanel
         {
             Spacing = 6, VerticalAlignment = VerticalAlignment.Center,
-            Children = { toggleBtn, uninstallBtn },
+            Children = { toggleBtn, detailBtn, uninstallBtn },
         };
 
         var grid = new Grid
@@ -186,10 +220,10 @@ public sealed class InstalledModsView : UserControl
             ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
             Margin = new Thickness(12, 8),
         };
-        Grid.SetColumn(iconFrame, 0);
+        Grid.SetColumn(coverFrame, 0);
         Grid.SetColumn(titleColumn, 1);
         Grid.SetColumn(actions, 2);
-        grid.Children.Add(iconFrame);
+        grid.Children.Add(coverFrame);
         grid.Children.Add(titleColumn);
         grid.Children.Add(actions);
 

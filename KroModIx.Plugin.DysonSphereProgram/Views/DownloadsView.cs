@@ -10,6 +10,10 @@ using KroModIx.Plugin.DysonSphereProgram.Services;
 
 namespace KroModIx.Plugin.DysonSphereProgram.Views;
 
+/// <summary>v0.6: Row-Layout gleich zum Nexus-Katalog (Cover 140x90 +
+/// Titel/Autor/Version/Datum + Summary + Details/Install/Delete-Buttons).
+/// Doppelklick oeffnet das gleiche Detail-Window. Kernprinzipien 6/7
+/// aus dem KroModIx-Plugin-Skill.</summary>
 public sealed class DownloadsView : UserControl
 {
     public DownloadsView()
@@ -45,6 +49,11 @@ public sealed class DownloadsView : UserControl
         };
         list.Bind(ListBox.ItemsSourceProperty, new Binding(nameof(DownloadsViewModel.Rows)));
         list.ItemTemplate = new FuncDataTemplate<DownloadRow>((r, _) => r is null ? null : BuildRowCard(), true);
+        list.DoubleTapped += (_, _) =>
+        {
+            if (list.DataContext is DownloadsViewModel vm && list.SelectedItem is DownloadRow row)
+                vm.ShowDetailCommand.Execute(row);
+        };
 
         Content = new DockPanel
         {
@@ -55,51 +64,95 @@ public sealed class DownloadsView : UserControl
 
     private static Control BuildRowCard()
     {
-        var iconFrame = new Border
+        var coverFrame = new Border
         {
-            Width = 60, Height = 60, CornerRadius = new CornerRadius(6),
+            Width = 140, Height = 90, CornerRadius = new CornerRadius(6),
+            ClipToBounds = true,
             [!Border.BackgroundProperty] = new DynamicResourceExtension("KrosteSurfaceBrush"),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        var icon = new TextBlock
+        var panel = new Panel();
+        var fallback = new TextBlock
         {
-            Text = "📦", FontSize = 28,
+            Text = "📦", FontSize = 32,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        icon.Classes.Add("muted");
-        iconFrame.Child = icon;
+        fallback.Classes.Add("muted");
+        fallback.Bind(TextBlock.IsVisibleProperty, new Binding(nameof(DownloadRow.NoCover)));
+        panel.Children.Add(fallback);
+        var img = new Image
+        {
+            Stretch = Stretch.UniformToFill,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+        };
+        img.Bind(Image.SourceProperty, new Binding(nameof(DownloadRow.Cover)));
+        img.Bind(Image.IsVisibleProperty, new Binding(nameof(DownloadRow.HasCover)));
+        panel.Children.Add(img);
+        coverFrame.Child = panel;
 
-        var name = new TextBlock { FontWeight = FontWeight.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis };
-        name.Bind(TextBlock.TextProperty, new Binding(nameof(DownloadRow.FileName)));
-        var subtitle = new TextBlock { FontSize = 11 };
+        var title = new TextBlock
+        {
+            FontWeight = FontWeight.SemiBold,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        title.Bind(TextBlock.TextProperty, new Binding(nameof(DownloadRow.DisplayName)));
+
+        var subtitle = new TextBlock();
         subtitle.Classes.Add("muted");
         subtitle.Bind(TextBlock.TextProperty, new Binding(nameof(DownloadRow.SubtitleText)));
-        var titleCol = new StackPanel
+
+        var summary = new TextBlock
+        {
+            Margin = new Thickness(0, 4, 0, 0),
+            TextWrapping = TextWrapping.Wrap,
+            MaxHeight = 40,
+        };
+        summary.Classes.Add("secondary");
+        summary.Bind(TextBlock.TextProperty, new Binding(nameof(DownloadRow.NexusSummary)));
+        summary.Bind(TextBlock.IsVisibleProperty, new Binding(nameof(DownloadRow.HasSummary)));
+
+        var filename = new TextBlock
+        {
+            FontSize = 10,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(0, 2, 0, 0),
+        };
+        filename.Classes.Add("muted");
+        filename.Bind(TextBlock.TextProperty, new Binding(nameof(DownloadRow.FileName)));
+
+        var textStack = new StackPanel
         {
             Spacing = 2, VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(14, 0, 0, 0),
-            Children = { name, subtitle },
+            Children = { title, subtitle, summary, filename },
         };
 
         var installBtn = new Button { Content = Strings.T("btn.install") };
         installBtn.Classes.Add("accent");
         BindRowCmd(installBtn, nameof(DownloadsViewModel.InstallRowCommand));
+
+        var detailBtn = new Button { Content = Strings.T("btn.details") };
+        BindRowCmd(detailBtn, nameof(DownloadsViewModel.ShowDetailCommand));
+        detailBtn.Bind(Button.IsEnabledProperty, new Binding(nameof(DownloadRow.HasNexusMatch)));
+
         var deleteBtn = new Button { Content = Strings.T("btn.delete_file") };
         deleteBtn.Classes.Add("danger");
         BindRowCmd(deleteBtn, nameof(DownloadsViewModel.DeleteRowCommand));
+
         var actions = new StackPanel
         {
             Spacing = 6, VerticalAlignment = VerticalAlignment.Center,
-            Children = { installBtn, deleteBtn },
+            Children = { installBtn, detailBtn, deleteBtn },
         };
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), Margin = new Thickness(12, 8) };
-        Grid.SetColumn(iconFrame, 0);
-        Grid.SetColumn(titleCol, 1);
+        Grid.SetColumn(coverFrame, 0);
+        Grid.SetColumn(textStack, 1);
         Grid.SetColumn(actions, 2);
-        grid.Children.Add(iconFrame);
-        grid.Children.Add(titleCol);
+        grid.Children.Add(coverFrame);
+        grid.Children.Add(textStack);
         grid.Children.Add(actions);
         var card = new Border { Margin = new Thickness(0, 0, 0, 6), Child = grid };
         card.Classes.Add("card");
