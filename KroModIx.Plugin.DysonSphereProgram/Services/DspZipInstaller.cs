@@ -23,6 +23,12 @@ namespace KroModIx.Plugin.DysonSphereProgram.Services;
 public sealed class DspZipInstaller
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+    private readonly DspInstallManifestStore? _manifests;
+
+    public DspZipInstaller(DspInstallManifestStore? manifests = null)
+    {
+        _manifests = manifests;
+    }
 
     public DspZipInstallResult Install(string archivePath, DetectedGame game)
     {
@@ -49,6 +55,7 @@ public sealed class DspZipInstaller
             if (knownLayout)
             {
                 var installed = ExtractDirect(entries, installDir);
+                WriteManifests(installed, installDir, archivePath);
                 return DspZipInstallResult.Ok(
                     $"Direkt-Layout: {installed.Count} Datei(en) ins Game-Root extrahiert.", installed);
             }
@@ -69,6 +76,7 @@ public sealed class DspZipInstaller
                     ExtractOne(e, dst);
                     installedFlat.Add(dst);
                 }
+                WriteManifests(installedFlat, installDir, archivePath);
                 return DspZipInstallResult.Ok(
                     $"Flat-Layout: {installedFlat.Count} DLL(s) nach BepInEx/plugins/ extrahiert.",
                     installedFlat);
@@ -96,6 +104,7 @@ public sealed class DspZipInstaller
                     ExtractOne(e, dst);
                     installedFolder.Add(dst);
                 }
+                WriteManifests(installedFolder, installDir, archivePath, rootName);
                 return DspZipInstallResult.Ok(
                     $"Ordner-Layout '{rootName}': {installedFolder.Count} Datei(en) nach BepInEx/plugins/{rootName}/ extrahiert.",
                     installedFolder);
@@ -134,6 +143,44 @@ public sealed class DspZipInstaller
         using var input = entry.OpenEntryStream();
         using var output = File.Create(destination);
         input.CopyTo(output);
+    }
+
+    /// <summary>Fuer jeden installierten DLL-Namen ein Manifest im
+    /// <see cref="DspInstallManifestStore"/> speichern. ModId + Version
+    /// aus dem Nexus-CDN-Filename (falls Nexus-Naming) — sonst leer,
+    /// dann kein Update-Discovery moeglich fuer diesen Mod.</summary>
+    private void WriteManifests(IReadOnlyList<string> installedPaths, string installDir,
+        string archivePath, string? explicitModName = null)
+    {
+        if (_manifests is null) return;
+        var archiveName = Path.GetFileName(archivePath);
+        var nexusModId = NexusFileNameParser.TryExtractModId(archiveName);
+        var nexusVersion = NexusFileNameParser.TryExtractVersion(archiveName);
+
+        // Explizit uebergebener Ordner-Name (Ordner-Layout) → ein Manifest pro Ordner.
+        // Sonst: pro installierter .dll ein Manifest.
+        var manifestNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrEmpty(explicitModName))
+        {
+            manifestNames.Add(explicitModName);
+        }
+        else
+        {
+            foreach (var p in installedPaths)
+            {
+                if (p.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                    manifestNames.Add(Path.GetFileNameWithoutExtension(p));
+            }
+        }
+        foreach (var name in manifestNames)
+        {
+            var key = DspInstallManifestStore.BuildKey(name);
+            _manifests.Save(key, new DspInstallManifest(
+                NexusModId: nexusModId,
+                OriginalFilename: archiveName,
+                NexusVersion: nexusVersion,
+                InstalledAtUtc: DateTime.UtcNow));
+        }
     }
 
     public static readonly string[] SupportedExtensions = new[] { ".zip", ".rar", ".7z" };

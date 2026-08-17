@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
@@ -14,12 +15,12 @@ namespace KroModIx.Plugin.DysonSphereProgram;
 /// Assistent (direkter Download vom offiziellen GitHub-Release).
 /// Nutzt Host-Contract IHostServices.Nexus fuer den Katalog (Contracts v1.15+,
 /// oeffentliches GraphQL). SharpCompress fuer ZIP/RAR/7z-Install.</summary>
-public sealed class DysonSphereProgramPlugin : IGameModPlugin
+public sealed class DysonSphereProgramPlugin : IGameModPlugin, IUpdateNotifier
 {
     public PluginMetadata Metadata { get; } = new(
         Id: "kroste.dysonsphereprogram",
         DisplayName: "Dyson Sphere Program Mod-Manager",
-        Version: "0.3.3",
+        Version: "0.4.0",
         Author: "Kroste",
         Description: "Mod-Verwaltung für Dyson Sphere Program. " +
             "v0.2.0: Drei Tabs (Installiert / Nexus-Katalog / Downloads), " +
@@ -47,9 +48,12 @@ public sealed class DysonSphereProgramPlugin : IGameModPlugin
     private DspNexusCatalog? _catalog;
     private DspDownloader? _downloader;
     private DspZipInstaller? _zipInstaller;
+    private DspInstallManifestStore? _manifests;
+    private DspUpdateChecker? _updateChecker;
     private CoverCache? _covers;
     private DownloadEventBus? _bus;
     private BepInExBootstrapper? _bootstrapper;
+    private IReadOnlyList<DetectedGame> _activatedGames = Array.Empty<DetectedGame>();
 
     public Task InitializeAsync(IHostServices host,
         IReadOnlyList<DetectedGame> activatedGames, CancellationToken ct)
@@ -63,10 +67,32 @@ public sealed class DysonSphereProgramPlugin : IGameModPlugin
         _catalog = new DspNexusCatalog(host.Nexus);
         _downloader = new DspDownloader(host.Nexus,
             host.CreateHttpClient("dsp-downloads"), _pluginPaths);
-        _zipInstaller = new DspZipInstaller();
+        _manifests = new DspInstallManifestStore(host);
+        _zipInstaller = new DspZipInstaller(_manifests);
+        _updateChecker = new DspUpdateChecker(_manifests, _catalog);
         _covers = new CoverCache(host.CreateHttpClient("dsp-covers"), host);
         _bus = new DownloadEventBus();
         _bootstrapper = new BepInExBootstrapper(host.CreateHttpClient("dsp-bepinex-bootstrap"));
+        _activatedGames = activatedGames;
+
+        // v0.4: Auto-Update-Check nach 15s Bootstrap-Delay (analog Cyberpunk).
+        // Nach jedem ModInstalled-Event via DownloadEventBus erneut triggern
+        // damit der Sidebar-Badge nach Install sinkt.
+        _ = Task.Run(async () =>
+        {
+            try { await Task.Delay(TimeSpan.FromSeconds(15), ct); } catch { return; }
+            try { await _updateChecker.CheckAsync(ct); }
+            catch (Exception ex) { host.Logger.Debug(ex, "Auto-Update-Check fehlgeschlagen"); }
+            try { await host.RequestUpdateBadgeRefreshAsync(); } catch { }
+        }, ct);
+        _bus.ModInstalled += (_, _) =>
+        {
+            _ = Task.Run(async () =>
+            {
+                try { await _updateChecker.CheckAsync(); } catch { }
+                try { await host.RequestUpdateBadgeRefreshAsync(); } catch { }
+            });
+        };
 
         foreach (var game in activatedGames)
         {
@@ -94,6 +120,25 @@ public sealed class DysonSphereProgramPlugin : IGameModPlugin
     {
         _host?.Logger.Info("DSP shutdown");
         return Task.CompletedTask;
+    }
+
+    // ---- IUpdateNotifier (v0.4) ----
+
+    public Task<IReadOnlyList<GameUpdateInfo>> GetPendingUpdatesAsync(CancellationToken ct)
+    {
+        if (_updateChecker is null || _activatedGames.Count == 0)
+            return Task.FromResult<IReadOnlyList<GameUpdateInfo>>(Array.Empty<GameUpdateInfo>());
+        var count = _updateChecker.PendingCount;
+        if (count <= 0)
+            return Task.FromResult<IReadOnlyList<GameUpdateInfo>>(Array.Empty<GameUpdateInfo>());
+        var summary = count == 1
+            ? $"1 Mod-Update verfuegbar: {_updateChecker.Pending[0].InstalledName}"
+            : $"{count} Mod-Updates verfuegbar";
+        var infos = _activatedGames
+            .Where(g => g.Target.SteamAppId is int)
+            .Select(g => new GameUpdateInfo(g.Target.SteamAppId!.Value, count, summary))
+            .ToList();
+        return Task.FromResult<IReadOnlyList<GameUpdateInfo>>(infos);
     }
 
     private sealed class InstalledTab : IGameTabContribution
