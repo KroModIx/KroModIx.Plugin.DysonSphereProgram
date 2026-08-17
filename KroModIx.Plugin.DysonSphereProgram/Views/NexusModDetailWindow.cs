@@ -143,17 +143,37 @@ public sealed class NexusModDetailWindow : Window
             FontWeight = FontWeight.SemiBold,
         };
         descTitle.Classes.Add("section-label");
-        var descBody = new TextBlock
+
+        // v0.6.3: Rich-HTML-Rendering via _host.Descriptions.CreateRichView
+        // (HtmlPanel) statt Plain-Text-TextBlock. Fallback wenn noch nicht
+        // fertig geladen: kurzer Loading-TextBlock (DescriptionText enthaelt
+        // dann noch "wird geladen …").
+        var descRichHost = new ContentControl
+        {
+            Margin = new Thickness(0, 4, 0, 0),
+        };
+        descRichHost.Bind(ContentControl.ContentProperty,
+            new Binding(nameof(NexusModDetailViewModel.DescriptionView)));
+
+        var descLoadingFallback = new TextBlock
         {
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 4, 0, 0),
         };
-        descBody.Bind(TextBlock.TextProperty, new Binding(nameof(NexusModDetailViewModel.DescriptionText)));
+        descLoadingFallback.Classes.Add("muted");
+        descLoadingFallback.Bind(TextBlock.TextProperty,
+            new Binding(nameof(NexusModDetailViewModel.DescriptionText)));
+        descLoadingFallback.Bind(TextBlock.IsVisibleProperty,
+            new Binding(nameof(NexusModDetailViewModel.DescriptionView))
+            {
+                Converter = new Avalonia.Data.Converters.FuncValueConverter<Control?, bool>(
+                    c => c is null),
+            });
 
         var body = new StackPanel
         {
             Spacing = 4,
-            Children = { aiPanel, descTitle, descBody },
+            Children = { aiPanel, descTitle, descRichHost, descLoadingFallback },
         };
         var scroll = new ScrollViewer
         {
