@@ -91,15 +91,31 @@ public sealed class DspZipInstaller
             if (rootDirs.Count == 1)
             {
                 var rootName = rootDirs[0];
-                var targetFolder = Path.Combine(pluginsDir, rootName);
+                if (!TryResolveSafe(pluginsDir, rootName, out var targetFolder))
+                {
+                    Log.Warn("Zip-Slip im Root-Ordnernamen: {N}", rootName);
+                    return DspZipInstallResult.Fail($"Unsicherer Ordnername im Archiv: {rootName}");
+                }
                 Directory.CreateDirectory(targetFolder);
                 var installedFolder = new List<string>();
                 foreach (var e in entries)
                 {
                     var relInArchive = (e.Key ?? "").Replace('\\', '/');
-                    // Root-Ordner-Prefix strippen
+                    // Root-Ordner-Prefix strippen. Eintraege ausserhalb des
+                    // Root-Ordners (z. B. ein README neben dem Ordner) haben
+                    // das Prefix nicht — frueher lief das in eine
+                    // ArgumentOutOfRangeException im Substring.
+                    if (!relInArchive.StartsWith(rootName + "/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Log.Debug("Eintrag ausserhalb des Root-Ordners uebersprungen: {N}", relInArchive);
+                        continue;
+                    }
                     var rel = relInArchive.Substring(rootName.Length + 1);
-                    var dst = Path.Combine(targetFolder, rel.Replace('/', Path.DirectorySeparatorChar));
+                    if (!TryResolveSafe(targetFolder, rel, out var dst))
+                    {
+                        Log.Warn("Zip-Slip: {N}", relInArchive);
+                        continue;
+                    }
                     Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
                     ExtractOne(e, dst);
                     installedFolder.Add(dst);
@@ -129,13 +145,42 @@ public sealed class DspZipInstaller
         {
             var name = (e.Key ?? "").Replace('\\', '/');
             if (string.IsNullOrEmpty(name) || name.EndsWith('/')) continue;
-            if (name.Contains("..")) { Log.Warn("Zip-Slip: {N}", name); continue; }
-            var dst = Path.Combine(installDir, name.Replace('/', Path.DirectorySeparatorChar));
+            if (!TryResolveSafe(installDir, name, out var dst))
+            {
+                Log.Warn("Zip-Slip: {N}", name);
+                continue;
+            }
             Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
             ExtractOne(e, dst);
             installed.Add(dst);
         }
         return installed;
+    }
+
+    /// <summary>Zip-Slip-Guard: loest einen Archiv-relativen Pfad gegen
+    /// <paramref name="root"/> auf und akzeptiert ihn nur, wenn das Ergebnis
+    /// wirklich unterhalb von root landet.
+    ///
+    /// <para>Ein reiner <c>Contains("..")</c>-Check (so war es vorher, und
+    /// auch nur im Direkt-Layout-Pfad) reicht nicht: absolute Keys
+    /// (<c>/etc/…</c>, <c>C:\…</c>) rutschen durch, und im Ordner-Layout gab
+    /// es gar keine Pruefung. Der Vergleich laeuft ueber GetFullPath, damit
+    /// auch normalisierte Umwege erwischt werden.</para></summary>
+    public static bool TryResolveSafe(string root, string relative, out string destination)
+    {
+        destination = "";
+        if (string.IsNullOrWhiteSpace(relative)) return false;
+        var rel = relative.Replace('\\', Path.DirectorySeparatorChar)
+                          .Replace('/', Path.DirectorySeparatorChar);
+        if (Path.IsPathRooted(rel)) return false;
+        var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar)
+                       + Path.DirectorySeparatorChar;
+        string full;
+        try { full = Path.GetFullPath(Path.Combine(rootFull, rel)); }
+        catch { return false; }
+        if (!full.StartsWith(rootFull, StringComparison.Ordinal)) return false;
+        destination = full;
+        return true;
     }
 
     private static void ExtractOne(IArchiveEntry entry, string destination)
