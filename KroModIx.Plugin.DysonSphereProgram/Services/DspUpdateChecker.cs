@@ -17,8 +17,8 @@ namespace KroModIx.Plugin.DysonSphereProgram.Services;
 /// Analog zum Cyberpunk-Muster.</para>
 ///
 /// <para>Version-Vergleich: <see cref="DspInstallManifest.NexusVersion"/>
-/// (aus Filename beim Install-Zeitpunkt) vs die aktuelle Katalog-Version.
-/// Beide werden via <see cref="Version.TryParse"/> geparst — bei
+/// (aus Filename beim Install-Zeitpunkt) vs die aktuelle Katalog-Version,
+/// via <see cref="VersionCompare"/> aus den Contracts (v1.27) — bei
 /// unparseablem Format kein Update-Candidate.</para></summary>
 public sealed class DspUpdateChecker
 {
@@ -96,8 +96,7 @@ public sealed class DspUpdateChecker
         foreach (var (key, manifest) in installed)
         {
             if (!byModId.TryGetValue(manifest.NexusModId!.Value, out var entry)) continue;
-            if (!TryCompareVersions(manifest.NexusVersion!, entry.Version, out var isNewer)) continue;
-            if (!isNewer) continue;
+            if (!VersionCompare.IsNewer(entry.Version, manifest.NexusVersion!)) continue;
             pending.Add(new DspUpdateCandidate(
                 InstalledName: key,
                 InstalledVersion: manifest.NexusVersion!,
@@ -112,22 +111,15 @@ public sealed class DspUpdateChecker
         return pending.Count;
     }
 
+    /// <summary>Beibehalten fuer bestehende Callsites/Tests, delegiert aber
+    /// an den Contracts-Baukasten (v1.27). Der frueher hier stehende
+    /// Version.TryParse-Eigenbau scheiterte still an Formaten wie "3" oder
+    /// "1.2.3b" und meldete dafuer nie ein Update.</summary>
     public static bool TryCompareVersions(string installed, string nexus, out bool isNewer)
     {
-        isNewer = false;
-        if (!TryParse(installed, out var i)) return false;
-        if (!TryParse(nexus, out var n)) return false;
-        isNewer = n > i;
-        return true;
-
-        static bool TryParse(string s, out Version v)
-        {
-            s = s.Trim();
-            if (s.StartsWith('v') || s.StartsWith('V')) s = s[1..];
-            var dash = s.IndexOf('-'); if (dash >= 0) s = s[..dash];
-            var plus = s.IndexOf('+'); if (plus >= 0) s = s[..plus];
-            return Version.TryParse(s, out v!);
-        }
+        var cmp = VersionCompare.Compare(nexus, installed);
+        isNewer = cmp is int c && c > 0;
+        return cmp is not null;
     }
 }
 

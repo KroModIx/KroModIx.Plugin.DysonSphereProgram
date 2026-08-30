@@ -7,7 +7,7 @@
          (zentraler HTML+BBCode-Parser) via _host.Descriptions. v1.18.0:
          IImageDecoder (zentraler Bild-Decoder mit ffmpeg-Chain fuer
          WebP/AVIF/DDS/HEIC). -->
-    <PackageVersion Include="KroModIx.Plugin.Contracts" Version="1.23.0" />
+    <PackageVersion Include="KroModIx.Plugin.Contracts" Version="1.27.0" />
     <PackageVersion Include="Avalonia" Version="12.1.0" />
     <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageVersion Include="MinVer" Version="7.0.0" />
