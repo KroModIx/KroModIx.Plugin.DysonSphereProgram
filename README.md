@@ -11,6 +11,10 @@ Steam AppId 1366540). Erkennt sowohl flat DLLs als auch Ordner-Layouts
 unter `BepInEx/plugins/`, Enable/Disable via `.disabled`-Suffix,
 Uninstall, Bulk-Aktionen. DE+EN-Übersetzung.
 
+## Screenshot
+
+![Nexus-Katalog für BepInEx-Plugins](docs/screenshot.png)
+
 ## Voraussetzung — BepInEx installieren
 
 Das Plugin verwaltet **nur** was BepInEx bereits geladen hat.
@@ -20,7 +24,7 @@ BepInEx selbst kommt vom User via
 DSP einmal starten damit BepInEx sich initialisiert — danach existiert
 `BepInEx/core/BepInEx.dll` und das Plugin erkennt den Install.
 
-## Features (v0.1.0)
+## Features
 
 ### Installiert-Tab
 
