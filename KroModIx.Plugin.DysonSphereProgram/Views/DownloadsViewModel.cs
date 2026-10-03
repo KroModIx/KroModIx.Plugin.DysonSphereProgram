@@ -175,7 +175,8 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     {
         try
         {
-            var bepinex = Path.Combine(_game.InstallDir, "BepInEx");
+            var bepinex = ModFolderDiscovery.Find(_game.InstallDir, "BepInEx")
+                          ?? Path.Combine(_game.InstallDir, "BepInEx");
             if (!Directory.Exists(bepinex))
             {
                 _host.Logger.Debug("BepInEx/ existiert nicht — kein Snapshot noetig");

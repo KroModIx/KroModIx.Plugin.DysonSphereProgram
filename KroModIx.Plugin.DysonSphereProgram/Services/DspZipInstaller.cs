@@ -61,7 +61,10 @@ public sealed class DspZipInstaller
             }
 
             // 2) Flat DLL(s) auf Archive-Root → nach BepInEx/plugins/
-            var pluginsDir = Path.Combine(installDir, "BepInEx", "plugins");
+            // v0.8.0: anlegen statt annehmen — BepInEx legt plugins/ erst beim
+            // ersten Spielstart an.
+            var pluginsDir = ModFolderDiscovery.FindOrCreate(installDir, "BepInEx/plugins")
+                             ?? Path.Combine(installDir, "BepInEx", "plugins");
             Directory.CreateDirectory(pluginsDir);
             var rootDlls = entries.Where(e =>
                 (e.Key ?? "").IndexOf('/') < 0

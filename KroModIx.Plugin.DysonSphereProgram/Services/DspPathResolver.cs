@@ -11,7 +11,11 @@ public sealed class DspPathResolver
     /// <summary>Absoluter Pfad zum BepInEx-Plugins-Ordner. Rueckgabe garantiert
     /// nicht dass er existiert — <see cref="LooksLikeBepInExInstall"/> davor rufen.</summary>
     public string GetPluginsDir(DetectedGame game) =>
-        Path.Combine(game.InstallDir, "BepInEx", "plugins");
+        ModFolderDiscovery.FindOrCreate(game.InstallDir, "BepInEx/plugins")
+        // v0.8.0: FindOrCreate statt fest — BepInEx legt plugins/ erst beim
+        // ersten Spielstart an, und unter Linux zaehlt die Schreibweise.
+        // Fallback nur damit die Signatur nicht-nullable bleibt.
+        ?? Path.Combine(game.InstallDir, "BepInEx", "plugins");
 
     /// <summary>BepInEx-Marker: <c>BepInEx/core/BepInEx.dll</c> muss existieren.
     /// Ohne diesen Marker ist nur das reine Nexus-Zip entpackt (Nutzer hat's
