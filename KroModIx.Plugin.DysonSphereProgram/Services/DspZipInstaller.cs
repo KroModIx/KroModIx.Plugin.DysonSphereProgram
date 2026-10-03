@@ -4,7 +4,6 @@ using System.IO;
 using System.Linq;
 using KroModIx.Plugin.Contracts;
 using NLog;
-using SharpCompress.Archives;
 
 namespace KroModIx.Plugin.DysonSphereProgram.Services;
 
@@ -23,12 +22,21 @@ namespace KroModIx.Plugin.DysonSphereProgram.Services;
 public sealed class DspZipInstaller
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+    private readonly IArchiveService _archives;
     private readonly DspInstallManifestStore? _manifests;
 
-    public DspZipInstaller(DspInstallManifestStore? manifests = null)
+    public DspZipInstaller(IArchiveService archives, DspInstallManifestStore? manifests = null)
     {
+        _archives = archives;
         _manifests = manifests;
     }
+
+    /// <summary>Endungs-Vorfilter fuer den Downloads-Tab. Kommt aus dem
+    /// Host-Baukasten, damit ein dort neu unterstuetztes Format nicht in
+    /// neun Plugins nachgetragen werden muss.</summary>
+    public IReadOnlyList<string> SupportedExtensions => _archives.SupportedExtensions;
+
+    public bool HasSupportedExtension(string path) => _archives.HasSupportedExtension(path);
 
     public DspZipInstallResult Install(string archivePath, DetectedGame game)
     {
@@ -40,24 +48,27 @@ public sealed class DspZipInstaller
 
         try
         {
-            using var archive = ArchiveFactory.Open(archivePath);
-            var entries = archive.Entries
-                .Where(e => !e.IsDirectory && !string.IsNullOrEmpty(e.Key))
-                .ToList();
+            // Am Inhalt pruefen, nicht an der Endung: ein Download mit
+            // falscher Endung landete sonst unveraendert im Spiel.
+            if (_archives.DetectKind(archivePath) == ArchiveKind.Unknown)
+                return DspZipInstallResult.Fail(
+                    "Das ist kein lesbares Archiv (ZIP/RAR/7z) — eventuell ein abgebrochener Download.");
+
+            var entries = _archives.List(archivePath);
             if (entries.Count == 0)
                 return DspZipInstallResult.Fail("Archiv ist leer.");
 
-            var normalized = entries.Select(e => (e.Key ?? "").Replace('\\', '/')).ToList();
-
             // 1) Bekanntes Layout — enthaelt BepInEx/plugins/ (oder BepInEx/core/…)
-            bool knownLayout = normalized.Any(p =>
-                p.StartsWith("BepInEx/", StringComparison.OrdinalIgnoreCase));
+            bool knownLayout = entries.Any(e =>
+                e.Path.StartsWith("BepInEx/", StringComparison.OrdinalIgnoreCase));
             if (knownLayout)
             {
-                var installed = ExtractDirect(entries, installDir);
-                WriteManifests(installed, installDir, archivePath);
+                var r = _archives.Extract(archivePath, installDir);
+                if (Abgelehnt(r) is { } warnung) return DspZipInstallResult.Fail(warnung);
+                WriteManifests(r.ExtractedPaths, installDir, archivePath);
                 return DspZipInstallResult.Ok(
-                    $"Direkt-Layout: {installed.Count} Datei(en) ins Game-Root extrahiert.", installed);
+                    $"Direkt-Layout: {r.Count} Datei(en) ins Game-Root extrahiert.",
+                    r.ExtractedPaths);
             }
 
             // 2) Flat DLL(s) auf Archive-Root → nach BepInEx/plugins/
@@ -66,73 +77,55 @@ public sealed class DspZipInstaller
             var pluginsDir = ModFolderDiscovery.FindOrCreate(installDir, "BepInEx/plugins")
                              ?? Path.Combine(installDir, "BepInEx", "plugins");
             Directory.CreateDirectory(pluginsDir);
-            var rootDlls = entries.Where(e =>
-                (e.Key ?? "").IndexOf('/') < 0
-                && (e.Key ?? "").EndsWith(".dll", StringComparison.OrdinalIgnoreCase)).ToList();
-            if (rootDlls.Count > 0)
+            bool hatWurzelDlls = entries.Any(e =>
+                e.Path.IndexOf('/') < 0
+                && e.Path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase));
+            if (hatWurzelDlls)
             {
-                var installedFlat = new List<string>();
-                foreach (var e in rootDlls)
-                {
-                    var name = Path.GetFileName(e.Key!);
-                    var dst = Path.Combine(pluginsDir, name);
-                    ExtractOne(e, dst);
-                    installedFlat.Add(dst);
-                }
-                WriteManifests(installedFlat, installDir, archivePath);
+                var r = _archives.Extract(archivePath, pluginsDir, new ArchiveExtractOptions(
+                    Filter: p => p.IndexOf('/') < 0
+                                 && p.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)));
+                if (Abgelehnt(r) is { } warnung) return DspZipInstallResult.Fail(warnung);
+                WriteManifests(r.ExtractedPaths, installDir, archivePath);
                 return DspZipInstallResult.Ok(
-                    $"Flat-Layout: {installedFlat.Count} DLL(s) nach BepInEx/plugins/ extrahiert.",
-                    installedFlat);
+                    $"Flat-Layout: {r.Count} DLL(s) nach BepInEx/plugins/ extrahiert.",
+                    r.ExtractedPaths);
             }
 
             // 3) Ordner-Layout: einziger Root-Ordner enthaelt DLL(s)
-            var rootDirs = normalized
-                .Where(p => p.IndexOf('/') > 0)
-                .Select(p => p.Split('/')[0])
+            var rootDirs = entries
+                .Where(e => e.Path.IndexOf('/') > 0)
+                .Select(e => e.Path.Split('/')[0])
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             if (rootDirs.Count == 1)
             {
                 var rootName = rootDirs[0];
-                if (!TryResolveSafe(pluginsDir, rootName, out var targetFolder))
+                // Der Ordnername kommt aus dem Archiv, ist also genauso
+                // unvertrauenswuerdig wie ein Eintragspfad — derselbe
+                // Schutz, hier noch vor dem Anlegen.
+                if (!_archives.TryResolveSafe(pluginsDir, rootName, out var targetFolder))
                 {
                     Log.Warn("Zip-Slip im Root-Ordnernamen: {N}", rootName);
                     return DspZipInstallResult.Fail($"Unsicherer Ordnername im Archiv: {rootName}");
                 }
                 Directory.CreateDirectory(targetFolder);
-                var installedFolder = new List<string>();
-                foreach (var e in entries)
-                {
-                    var relInArchive = (e.Key ?? "").Replace('\\', '/');
-                    // Root-Ordner-Prefix strippen. Eintraege ausserhalb des
-                    // Root-Ordners (z. B. ein README neben dem Ordner) haben
-                    // das Prefix nicht — frueher lief das in eine
-                    // ArgumentOutOfRangeException im Substring.
-                    if (!relInArchive.StartsWith(rootName + "/", StringComparison.OrdinalIgnoreCase))
-                    {
-                        Log.Debug("Eintrag ausserhalb des Root-Ordners uebersprungen: {N}", relInArchive);
-                        continue;
-                    }
-                    var rel = relInArchive.Substring(rootName.Length + 1);
-                    if (!TryResolveSafe(targetFolder, rel, out var dst))
-                    {
-                        Log.Warn("Zip-Slip: {N}", relInArchive);
-                        continue;
-                    }
-                    Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
-                    ExtractOne(e, dst);
-                    installedFolder.Add(dst);
-                }
-                WriteManifests(installedFolder, installDir, archivePath, rootName);
+                // Eintraege ausserhalb des Root-Ordners (ein README daneben)
+                // ueberspringt StripPrefix von sich aus — frueher lief das in
+                // eine ArgumentOutOfRangeException im Substring.
+                var r = _archives.Extract(archivePath, targetFolder,
+                    new ArchiveExtractOptions(StripPrefix: rootName));
+                if (Abgelehnt(r) is { } warnung) return DspZipInstallResult.Fail(warnung);
+                WriteManifests(r.ExtractedPaths, installDir, archivePath, rootName);
                 return DspZipInstallResult.Ok(
-                    $"Ordner-Layout '{rootName}': {installedFolder.Count} Datei(en) nach BepInEx/plugins/{rootName}/ extrahiert.",
-                    installedFolder);
+                    $"Ordner-Layout '{rootName}': {r.Count} Datei(en) nach BepInEx/plugins/{rootName}/ extrahiert.",
+                    r.ExtractedPaths);
             }
 
             return DspZipInstallResult.Fail(
                 "Unbekanntes Archiv-Layout. Bitte manuell nach BepInEx/plugins/ entpacken. " +
                 $"Enthaelt {entries.Count} Datei(en) in Ordnern: " +
-                string.Join(", ", normalized.Take(5).Select(p => Path.GetDirectoryName(p)).Distinct()));
+                string.Join(", ", entries.Take(5).Select(e => Path.GetDirectoryName(e.Path)).Distinct()));
         }
         catch (Exception ex)
         {
@@ -141,56 +134,25 @@ public sealed class DspZipInstaller
         }
     }
 
-    private static IReadOnlyList<string> ExtractDirect(IEnumerable<IArchiveEntry> entries, string installDir)
-    {
-        var installed = new List<string>();
-        foreach (var e in entries)
-        {
-            var name = (e.Key ?? "").Replace('\\', '/');
-            if (string.IsNullOrEmpty(name) || name.EndsWith('/')) continue;
-            if (!TryResolveSafe(installDir, name, out var dst))
-            {
-                Log.Warn("Zip-Slip: {N}", name);
-                continue;
-            }
-            Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
-            ExtractOne(e, dst);
-            installed.Add(dst);
-        }
-        return installed;
-    }
-
-    /// <summary>Zip-Slip-Guard: loest einen Archiv-relativen Pfad gegen
-    /// <paramref name="root"/> auf und akzeptiert ihn nur, wenn das Ergebnis
-    /// wirklich unterhalb von root landet.
+    /// <summary>Hat der Ausbruch-Schutz Eintraege abgelehnt, bricht der
+    /// Install mit Meldung ab.
     ///
-    /// <para>Ein reiner <c>Contains("..")</c>-Check (so war es vorher, und
-    /// auch nur im Direkt-Layout-Pfad) reicht nicht: absolute Keys
-    /// (<c>/etc/…</c>, <c>C:\…</c>) rutschen durch, und im Ordner-Layout gab
-    /// es gar keine Pruefung. Der Vergleich laeuft ueber GetFullPath, damit
-    /// auch normalisierte Umwege erwischt werden.</para></summary>
-    public static bool TryResolveSafe(string root, string relative, out string destination)
+    /// <para><b>Das ist die Aenderung gegenueber v0.8.0.</b> Der eigene
+    /// Schutz war inhaltlich richtig — er loeste jeden Pfad gegen das Ziel
+    /// auf —, aber er <b>uebersprang</b> den abgelehnten Eintrag still und
+    /// meldete am Ende Erfolg. Wer ein Archiv mit einem Ausbruchsversuch
+    /// installierte, sah „Direkt-Layout: 42 Datei(en)" und erfuhr nichts
+    /// von der dreiundvierzigsten.</para></summary>
+    private static string? Abgelehnt(ArchiveExtractResult r)
     {
-        destination = "";
-        if (string.IsNullOrWhiteSpace(relative)) return false;
-        var rel = relative.Replace('\\', Path.DirectorySeparatorChar)
-                          .Replace('/', Path.DirectorySeparatorChar);
-        if (Path.IsPathRooted(rel)) return false;
-        var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar)
-                       + Path.DirectorySeparatorChar;
-        string full;
-        try { full = Path.GetFullPath(Path.Combine(rootFull, rel)); }
-        catch { return false; }
-        if (!full.StartsWith(rootFull, StringComparison.Ordinal)) return false;
-        destination = full;
-        return true;
-    }
-
-    private static void ExtractOne(IArchiveEntry entry, string destination)
-    {
-        using var input = entry.OpenEntryStream();
-        using var output = File.Create(destination);
-        input.CopyTo(output);
+        if (r.SkippedUnsafe.Count == 0) return null;
+        Log.Warn("Ausbruchsversuch im Archiv, {Count} Eintrag/Eintraege abgelehnt: {Entries}",
+            r.SkippedUnsafe.Count, string.Join(", ", r.SkippedUnsafe));
+        return $"Abgebrochen: {r.SkippedUnsafe.Count} Eintrag/Eintraege wollten aus dem "
+             + "Spielverzeichnis herausschreiben — "
+             + string.Join(", ", r.SkippedUnsafe.Take(3))
+             + (r.SkippedUnsafe.Count > 3 ? ", …" : "")
+             + $". {r.Count} Datei(en) waren schon geschrieben, bevor das auffiel.";
     }
 
     /// <summary>Fuer jeden installierten DLL-Namen ein Manifest im
@@ -231,7 +193,6 @@ public sealed class DspZipInstaller
         }
     }
 
-    public static readonly string[] SupportedExtensions = new[] { ".zip", ".rar", ".7z" };
 }
 
 public sealed record DspZipInstallResult(bool Success, string Message, IReadOnlyList<string> InstalledPaths)

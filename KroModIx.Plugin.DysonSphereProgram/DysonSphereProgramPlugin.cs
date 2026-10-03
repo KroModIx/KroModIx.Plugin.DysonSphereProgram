@@ -14,7 +14,7 @@ namespace KroModIx.Plugin.DysonSphereProgram;
 /// v0.2: Drei Tabs (Installiert / Nexus / Downloads) + BepInEx-Bootstrap-
 /// Assistent (direkter Download vom offiziellen GitHub-Release).
 /// Nutzt Host-Contract IHostServices.Nexus fuer den Katalog (Contracts v1.15+,
-/// oeffentliches GraphQL). SharpCompress fuer ZIP/RAR/7z-Install.</summary>
+/// oeffentliches GraphQL). Der Host-Archiv-Baukasten fuer ZIP/RAR/7z-Install.</summary>
 public sealed class DysonSphereProgramPlugin : IGameModPlugin, IUpdateNotifier
 {
     public PluginMetadata Metadata { get; } = new(
@@ -86,7 +86,7 @@ public sealed class DysonSphereProgramPlugin : IGameModPlugin, IUpdateNotifier
         _downloader = new DspDownloader(host.Nexus,
             host.CreateHttpClient("dsp-downloads"), _pluginPaths);
         _manifests = new DspInstallManifestStore(host);
-        _zipInstaller = new DspZipInstaller(_manifests);
+        _zipInstaller = new DspZipInstaller(host.Archives, _manifests);
         _updateChecker = new DspUpdateChecker(_manifests, _catalog);
         // v0.6.4: dem UpdateChecker die Liste aktuell installierter Mods
         // liefern — er filtert damit verwaiste Manifests (User loeschte
@@ -107,7 +107,9 @@ public sealed class DysonSphereProgramPlugin : IGameModPlugin, IUpdateNotifier
         };
         _covers = new CoverCache(host.CreateHttpClient("dsp-covers"), host);
         _bus = new DownloadEventBus();
-        _bootstrapper = new BepInExBootstrapper(host.CreateHttpClient("dsp-bepinex-bootstrap"));
+        _bootstrapper = new BepInExBootstrapper(
+            host.CreateHttpClient("dsp-bepinex-bootstrap"),
+            host.GitHub, host.Archives);
         _enricher = new DspNexusRowEnricher(host.Nexus, _covers, host);
         _activatedGames = activatedGames;
 

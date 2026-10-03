@@ -1,8 +1,6 @@
 using System;
 using System.IO;
-using System.IO.Compression;
 using System.Net.Http;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using KroModIx.Plugin.Contracts;
@@ -20,63 +18,66 @@ namespace KroModIx.Plugin.DysonSphereProgram.Services;
 /// braucht daher <c>BepInEx v5.x stable</c> (Mono-Variante), NICHT die
 /// v6-pre-IL2CPP-Variante. Asset-Pattern: <c>BepInEx_win_x64_{ver}.zip</c>
 /// (Underscore-Naming; nur v6-preX nutzt den Bindestrich-Namensraum
-/// <c>BepInEx-Unity.IL2CPP-win-x64-*</c>).</para></summary>
+/// <c>BepInEx-Unity.IL2CPP-win-x64-*</c>).</para>
+///
+/// <para><b>Seit v0.9.0 über <c>IHostServices.GitHub</c> und
+/// <c>.Archives</c></b> (Host v1.33.0), und <b>die fest hinterlegte
+/// Ausweich-URL ist weg.</b> Sie zeigte auf <c>v5.4.23.5</c> und wäre mit
+/// jeder neuen BepInEx-Ausgabe weiter veraltet — ein Nutzer, der beim
+/// GitHub-Limit landet, hätte stillschweigend eine alte Fassung bekommen,
+/// ohne es zu erfahren.</para>
+///
+/// <para><b>Der Dateiname trägt hier die Version</b>, anders als bei
+/// MelonLoader. Das ist kein Hindernis: der Baukasten liefert neben dem Tag
+/// (<c>v5.4.23.5</c>) auch die Fassung ohne <c>v</c>
+/// (<c>5.4.23.5</c>) — und genau die steht im Dateinamen. Der
+/// Umleitungs-Pfad kommt damit ohne API-Aufruf zur richtigen URL.</para></summary>
 public sealed class BepInExBootstrapper
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
-    private const string ReleasesApi = "https://api.github.com/repos/BepInEx/BepInEx/releases";
+
+    private const string Repo = "BepInEx/BepInEx";
+
+    /// <summary>Die Mono-Fassung fuer Windows x64. Der Vergleich laeuft
+    /// ueber Anfang <b>und</b> Ende, damit die v6-IL2CPP-Vorabausgaben
+    /// (<c>BepInEx-Unity.IL2CPP-win-x64-*</c>) nicht mitgenommen werden —
+    /// DSP ist Unity Mono.</summary>
+    private const string AssetPrefix = "BepInEx_win_x64_";
 
     private readonly HttpClient _http;
+    private readonly IGitHubService _gitHub;
+    private readonly IArchiveService _archives;
 
-    /// <summary>Fallback-URL wenn die GitHub-API fehlschlaegt (rate limit,
-    /// Netz weg). Ist ein bekannter stable Release der zum DSP-Zeitpunkt
-    /// aktuell war. Kann bei Bedarf per neuem Plugin-Release aktualisiert
-    /// werden. GitHub-CDN erlaubt anonymous Downloads ohne API-Rate-Limit.</summary>
-    private const string FallbackAsset =
-        "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_win_x64_5.4.23.5.zip";
-    private const string FallbackVersion = "v5.4.23.5";
+    public BepInExBootstrapper(HttpClient http, IGitHubService gitHub, IArchiveService archives)
+    {
+        _http = http;
+        _gitHub = gitHub;
+        _archives = archives;
+    }
 
-    public BepInExBootstrapper(HttpClient http) => _http = http;
-
-    /// <summary>Downloadet + entpackt BepInEx IL2CPP x64 (bleeding-edge oder
-    /// latest-stable) ins <paramref name="installDir"/>. Bricht bei jedem
-    /// Fehler mit einer Message ab die dem User sagt was schiefging.</summary>
+    /// <summary>Downloadet + entpackt BepInEx (Mono, win-x64) ins
+    /// <paramref name="installDir"/>. Bricht bei jedem Fehler mit einer
+    /// Message ab die dem User sagt was schiefging.</summary>
     public async Task<BepInExInstallResult> InstallAsync(string installDir,
         IProgress<double>? progress = null, CancellationToken ct = default)
     {
         try
         {
             progress?.Report(0.05);
-            _http.DefaultRequestHeaders.UserAgent.TryParseAdd("KroModIx-DSP-Plugin/1.0");
-            _http.DefaultRequestHeaders.Accept.TryParseAdd("application/vnd.github+json");
-            // Optional: GITHUB_TOKEN aus Env-Var → 5000 statt 60 req/h (analog PluginUpdateService v1.10.2).
-            var ghToken = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
-            if (!string.IsNullOrEmpty(ghToken))
-                _http.DefaultRequestHeaders.Authorization =
-                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ghToken);
 
-            // Erst API probieren — liefert neueste stable Version.
-            var (url, assetName, version) = await TryFindLatestFromApiAsync(ct);
-
-            // Fallback: hartcoded latest-known-good (KEIN API-Call).
-            // Greift bei GitHub-403 (rate limit), Netz-Ausfall oder wenn kein
-            // stable Release die Assets liefert.
+            var (url, version) = await ResolveAssetAsync(ct).ConfigureAwait(false);
             if (url is null)
-            {
-                Log.Info("GitHub-API-Fallback aktiv — verwende {Ver} direkt", FallbackVersion);
-                url = FallbackAsset;
-                assetName = Path.GetFileName(FallbackAsset);
-                version = FallbackVersion;
-            }
+                return BepInExInstallResult.Fail(
+                    "Kein BepInEx-Release gefunden — weder über die GitHub-API noch über den "
+                    + "Umleitungs-Pfad. Besteht eine Internetverbindung?");
 
-            Log.Info("BepInEx-Download: {Asset} von {Url}", assetName, url);
+            Log.Info("BepInEx-Download: {Ver} von {Url}", version, url);
             progress?.Report(0.1);
 
             using var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
             resp.EnsureSuccessStatusCode();
 
-            var tmp = Path.Combine(Path.GetTempPath(),
-                $"bepinex-dsp-{Guid.NewGuid():N}.zip");
+            var tmp = Path.Combine(Path.GetTempPath(), $"bepinex-dsp-{Guid.NewGuid():N}.zip");
             try
             {
                 long total = resp.Content.Headers.ContentLength ?? 0;
@@ -98,31 +99,29 @@ public sealed class BepInExBootstrapper
 
                 // Ins Game-Root extrahieren — BepInEx-Zip enthaelt bereits
                 // BepInEx/, dotnet/, winhttp.dll, doorstop_config.ini auf Root-Ebene.
-                await Task.Run(() =>
+                var r = await Task.Run(() => _archives.Extract(tmp, installDir), ct)
+                    .ConfigureAwait(false);
+                if (r.SkippedUnsafe.Count > 0)
                 {
-                    using var zip = ZipFile.OpenRead(tmp);
-                    foreach (var entry in zip.Entries)
-                    {
-                        if (string.IsNullOrEmpty(entry.Name)) continue; // Directory-Marker
-                        var target = Path.Combine(installDir, entry.FullName.Replace('/', Path.DirectorySeparatorChar));
-                        // Zip-Slip-Prevention
-                        var full = Path.GetFullPath(target);
-                        if (!full.StartsWith(Path.GetFullPath(installDir), StringComparison.OrdinalIgnoreCase))
-                        {
-                            Log.Warn("Zip-Slip-Attempt: {Entry}", entry.FullName);
-                            continue;
-                        }
-                        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                        entry.ExtractToFile(target, overwrite: true);
-                    }
-                }, ct);
+                    // Bei BepInEx selbst waere das ein Alarmzeichen: das ist
+                    // ein Release eines bekannten Projekts, nicht ein
+                    // Nutzer-Archiv. Lieber abbrechen und melden.
+                    Log.Warn("BepInEx-Archiv enthielt {Count} Ausbruchsversuch(e): {Entries}",
+                        r.SkippedUnsafe.Count, string.Join(", ", r.SkippedUnsafe));
+                    return BepInExInstallResult.Fail(
+                        $"Das BepInEx-Archiv enthielt {r.SkippedUnsafe.Count} Eintrag/Einträge, "
+                        + "die aus dem Spielverzeichnis herausschreiben wollten. Abgebrochen — "
+                        + "das sollte bei einem offiziellen Release nicht vorkommen.");
+                }
+
                 progress?.Report(1.0);
-                Log.Info("BepInEx {Ver} installiert nach {Dir}", version, installDir);
+                Log.Info("BepInEx {Ver} installiert nach {Dir} ({N} Datei(en))",
+                    version, installDir, r.Count);
                 return BepInExInstallResult.Ok(version ?? "unbekannt");
             }
             finally
             {
-                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { /* Aufräumen darf scheitern */ }
             }
         }
         catch (Exception ex)
@@ -132,69 +131,30 @@ public sealed class BepInExBootstrapper
         }
     }
 
-    /// <summary>Versucht ueber die GitHub-API das neueste stable-BepInEx-Release
-    /// zu finden. Liefert (null, null, null) bei jedem Fehler (403 Rate-Limit,
-    /// Netz weg, Kein-Match). Caller faellt dann auf <see cref="FallbackAsset"/>
-    /// zurueck. Wichtig: NICHT werfen — der Fallback ist Teil des Normal-Flows,
-    /// keine Exception.</summary>
-    private async Task<(string? Url, string? AssetName, string? Version)> TryFindLatestFromApiAsync(CancellationToken ct)
+    /// <summary>Erst die Dateiliste der neuesten stabilen Ausgabe; greift die
+    /// Raten-Sperre, kennt der Baukasten nur den Tag — dann wird der
+    /// Dateiname aus der Fassung gebildet
+    /// (<c>BepInEx_win_x64_5.4.23.5.zip</c> zum Tag <c>v5.4.23.5</c>).</summary>
+    private async Task<(string? Url, string? Version)> ResolveAssetAsync(CancellationToken ct)
     {
-        try
-        {
-            using var resp = await _http.GetAsync(ReleasesApi + "?per_page=30", ct);
-            if (!resp.IsSuccessStatusCode)
-            {
-                Log.Info("GitHub-API {Status} — nutze Fallback-Asset", (int)resp.StatusCode);
-                return (null, null, null);
-            }
-            var releasesJson = await resp.Content.ReadAsStringAsync(ct);
-            var releases = JsonSerializer.Deserialize<GhRelease[]>(releasesJson, JsonOpts);
-            if (releases is null || releases.Length == 0) return (null, null, null);
+        var hit = await _gitHub.FindLatestAssetAsync(Repo, PasstAufDieMonoFassung, ct)
+            .ConfigureAwait(false);
+        if (hit is not null)
+            return (hit.Value.Asset.DownloadUrl, hit.Value.Release.Tag);
 
-            foreach (var rel in releases)
-            {
-                if (rel.Prerelease) continue; // v6-pre skippen (IL2CPP)
-                foreach (var asset in rel.Assets ?? Array.Empty<GhAsset>())
-                {
-                    var name = asset.Name ?? "";
-                    if (name.StartsWith("BepInEx_win_x64_", StringComparison.OrdinalIgnoreCase)
-                        && name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-                    {
-                        return (asset.BrowserDownloadUrl, name, rel.TagName);
-                    }
-                }
-            }
-            return (null, null, null);
-        }
-        catch (Exception ex)
-        {
-            Log.Debug(ex, "GitHub-API-Query fehlgeschlagen — nutze Fallback");
-            return (null, null, null);
-        }
+        var release = await _gitHub.GetLatestReleaseAsync(Repo, ct).ConfigureAwait(false);
+        if (release is null) return (null, null);
+
+        var name = $"{AssetPrefix}{release.Version}.zip";
+        Log.Info("Dateiliste nicht abrufbar ({Grund}) — URL aus Tag {Tag} und Namenskonvention {Name}",
+            _gitHub.IsRateLimited ? "GitHub-Limit erreicht" : "keine passende Datei gemeldet",
+            release.Tag, name);
+        return (_gitHub.BuildAssetUrl(Repo, release.Tag, name), release.Tag);
     }
 
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        // GitHub-API liefert snake_case (tag_name, browser_download_url,
-        // prerelease). PropertyNameCaseInsensitive matcht KEIN snake_case
-        // — nur reine Case-Unterschiede. Ohne SnakeCaseLower-Naming-Policy
-        // waeren TagName/Assets/BrowserDownloadUrl/Prerelease alle null,
-        // die Asset-Suche wuerde silently fehlschlagen.
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-        PropertyNameCaseInsensitive = true,
-    };
-
-    private sealed class GhRelease
-    {
-        public string? TagName { get; set; }
-        public bool Prerelease { get; set; }
-        public GhAsset[]? Assets { get; set; }
-    }
-    private sealed class GhAsset
-    {
-        public string? Name { get; set; }
-        public string? BrowserDownloadUrl { get; set; }
-    }
+    private static bool PasstAufDieMonoFassung(string assetName)
+        => assetName.StartsWith(AssetPrefix, StringComparison.OrdinalIgnoreCase)
+           && assetName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed record BepInExInstallResult(bool Success, string? Version, string? ErrorMessage)

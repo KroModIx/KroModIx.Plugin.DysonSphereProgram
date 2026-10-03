@@ -15,14 +15,24 @@ Uninstall, Bulk-Aktionen. DE+EN-Übersetzung.
 
 ![Nexus-Katalog für BepInEx-Plugins](docs/screenshot.png)
 
-## Voraussetzung — BepInEx installieren
+## Voraussetzungen
 
-Das Plugin verwaltet **nur** was BepInEx bereits geladen hat.
-BepInEx selbst kommt vom User via
+Braucht den [KroModIx-Host](https://github.com/KroModIx/KroModIx) **ab
+v1.33.0** — dort sitzen der Backup-Baukasten sowie seit v0.9.0 der Archiv-
+und der GitHub-Baukasten, gegen die dieses Plugin gebaut ist. Ältere Hosts
+laden das Plugin nicht.
+
+### BepInEx installieren
+
+Das Plugin verwaltet **nur** was BepInEx bereits geladen hat — holt es aber
+selbst: der Knopf im Installiert-Tab lädt die neueste stabile Mono-Fassung
+(`BepInEx_win_x64_*.zip`) direkt vom BepInEx-GitHub-Release und entpackt sie
+ins Game-Root. Danach DSP einmal starten, damit BepInEx sich initialisiert;
+dann existiert `BepInEx/core/BepInEx.dll` und das Plugin erkennt den Install.
+
+Wer es von Hand machen will:
 [BepInEx Pack for Dyson Sphere Program](https://www.nexusmods.com/dysonsphereprogram/mods/13)
-(oder direkt vom BepInEx-GitHub-Release). ZIP ins Game-Root extrahieren,
-DSP einmal starten damit BepInEx sich initialisiert — danach existiert
-`BepInEx/core/BepInEx.dll` und das Plugin erkennt den Install.
+oder direkt das BepInEx-GitHub-Release, ZIP ins Game-Root.
 
 ## Features
 

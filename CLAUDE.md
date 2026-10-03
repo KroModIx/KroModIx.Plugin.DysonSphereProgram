@@ -37,3 +37,46 @@ DSP lädt Mods über **BepInEx**:
 - **Kein Enable/Disable pro Mod** — BepInEx lädt, was in `plugins/` liegt.
 - **Kein Dependency-Resolver.** Mods mit Abhängigkeiten brauchen manuellen Zusatz-Install.
 - Der Versions-Vergleich kommt seit v0.7.0 aus dem Contracts-Baukasten (`VersionCompare`) — keine plugin-eigene Vergleichslogik mehr nachbauen.
+
+## Archive und GitHub kommen aus dem Host (ab v0.9.0)
+
+`DspZipInstaller` bekommt `IHostServices.Archives`, `BepInExBootstrapper`
+zusätzlich `.GitHub`. SharpCompress ist aus dem Plugin verschwunden.
+
+**Die fest hinterlegte Ausweich-URL ist weg.** Sie zeigte auf `v5.4.23.5`
+und wäre mit jeder neuen BepInEx-Ausgabe weiter veraltet. Wer beim
+GitHub-Limit landete, bekam stillschweigend eine alte Fassung, ohne es zu
+erfahren.
+
+**Bei BepInEx mit einer Zusatzschwierigkeit, die MelonLoader nicht hat: der
+Dateiname trägt die Version.** `BepInEx_win_x64_5.4.23.5.zip` zum Tag
+`v5.4.23.5`. Greift die Raten-Sperre, kennt der Baukasten nur den Tag — aber
+`GitHubRelease.Version` liefert die Fassung ohne führendes `v`, und genau die
+steht im Dateinamen. Der Umleitungs-Pfad kommt damit ohne API-Aufruf zur
+richtigen URL. Als Test festgehalten
+(`Bei_Raten_Sperre_entsteht_der_Dateiname_aus_der_Fassung`).
+
+**Der Namensvergleich läuft über Anfang *und* Ende.** Die v6-Vorabausgaben
+heißen `BepInEx-Unity.IL2CPP-win-x64-*` — Bindestriche statt Unterstriche.
+DSP ist Unity **Mono**; die IL2CPP-Fassung würde nicht laden. Ein „enthält
+BepInEx und endet auf .zip" hätte sie genommen.
+
+**Der eigene Ausbruch-Schutz war richtig gerechnet — und meldete trotzdem
+Erfolg.** Er löste jeden Pfad gegen das Ziel auf, übersprang den abgelehnten
+Eintrag dann aber **still**. Wer ein Archiv mit einem Ausbruchsversuch
+installierte, sah „Direkt-Layout: 42 Datei(en)" und erfuhr nichts von der
+dreiundvierzigsten. Jetzt bricht der Install ab und nennt die Einträge. Was
+dem eigenen Schutz außerdem fehlte: die Laufwerksbuchstaben-Prüfung —
+`C:\evil.dll` ist auf Linux nicht „rooted" und landete als Ordner namens
+`C:` **innerhalb** des Ziels. Kein Ausbruch, aber plattformabhängig.
+
+**Das Ordner-Layout (einziger Wurzelordner → `BepInEx/plugins/<name>/`)**
+läuft jetzt über `StripPrefix`. Ein README **neben** dem Ordner wird davon
+von sich aus übersprungen; früher lief genau das in eine
+`ArgumentOutOfRangeException` im Substring. Der Wurzel-Ordnername kommt aus
+dem Archiv und wird deshalb **vor** dem Anlegen durch denselben Schutz
+geschickt.
+
+**Der Bootstrap war ungetestet.** Jetzt 23 Tests, darunter welche URL er
+anfragt, der Raten-Sperren-Zweig, die IL2CPP-Abgrenzung, und dass ohne
+auffindbare Ausgabe gemeldet statt geraten wird.

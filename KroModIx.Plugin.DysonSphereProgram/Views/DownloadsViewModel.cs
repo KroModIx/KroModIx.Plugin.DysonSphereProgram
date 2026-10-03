@@ -15,7 +15,7 @@ using KroModIx.Plugin.DysonSphereProgram.Services;
 namespace KroModIx.Plugin.DysonSphereProgram.Views;
 
 /// <summary>Downloads-Tab: listet Archive im Plugin-Downloads-Ordner,
-/// bietet Install + Delete + Bulk-Install. ZIP/RAR/7z via SharpCompress.
+/// bietet Install + Delete + Bulk-Install. ZIP/RAR/7z über den Host-Archiv-Baukasten.
 /// Auto-Layout-Detection entscheidet zwischen direktem Extract vs
 /// BepInEx/plugins/&lt;Root&gt;/-Wrap.
 ///
@@ -72,8 +72,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
             return;
         }
         var files = Directory.EnumerateFiles(_paths.DownloadsDir)
-            .Where(f => DspZipInstaller.SupportedExtensions.Any(ext =>
-                f.EndsWith(ext, StringComparison.OrdinalIgnoreCase)))
+            .Where(_installer.HasSupportedExtension)
             .OrderByDescending(f => new FileInfo(f).LastWriteTimeUtc)
             .ToList();
         foreach (var f in files)
