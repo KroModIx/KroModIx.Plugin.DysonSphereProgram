@@ -80,3 +80,37 @@ geschickt.
 **Der Bootstrap war ungetestet.** Jetzt 23 Tests, darunter welche URL er
 anfragt, der Raten-Sperren-Zweig, die IL2CPP-Abgrenzung, und dass ohne
 auffindbare Ausgabe gemeldet statt geraten wird.
+
+## Fremde Mod-Manager (ab v0.10.0)
+
+`BepInExScanner` setzt `DspMod.ManagedBy`, wenn ein Eintrag unter
+`BepInEx/plugins/` **einem anderen Mod-Manager** gehört —
+`ForeignManagerDetection` aus den Contracts (v1.34.0), erkannt am **Verweis**,
+nicht am Namen. `DspInstallService.Uninstall` und `SetEnabled` werfen dann,
+die Zeile verliert ihre Knöpfe und nennt stattdessen den Verwalter, und die
+Bulk-Pfade überspringen sie.
+
+**Für BepInEx-Spiele ist das der Normalfall, nicht der Ausnahmefall.**
+r2modman, Gale und Thunderstore legen ihre Profile als Verweise in
+`BepInEx/plugins/` ab. Von allen neun Plugins war DSP damit das am stärksten
+betroffene: `Uninstall` macht bei einem Ordner ein
+`Directory.Delete(recursive: true)`.
+
+**Der Anlass ist bezahlt, nur in einem anderen Plugin.** Am 04.10.2026 hat ein
+Deinstallieren-Klick im Icarus-Plugin lmms zusammengeführtes Pak entfernt und
+damit lautlos eine Mod aus dem Spiel genommen — die Quelle lag unversehrt in
+lmms Zwischenspeicher. Gesucht wurde der Fehler danach stundenlang im Spiel.
+Hier wird es vorher abgefangen.
+
+**Zwei Entscheidungen, die der Code allein nicht hergibt:**
+
+- **Die Prüfung sitzt im ViewModel VOR dem Bestätigungsdialog.** Sonst
+  bestätigt der Nutzer etwas, das gar nicht passieren darf, und bekommt
+  danach eine Fehlermeldung — das ist die falsche Reihenfolge.
+- **Die Bulk-Pfade überspringen still** (`continue`), statt abzubrechen. Bei
+  „alle deaktivieren" ist ein fremder Eintrag kein Grund, die anderen
+  stehenzulassen.
+
+7 neue Tests, Suite bei 30 — darunter der Ordner-Fall, weil das rekursive
+Löschen der schlimmere der beiden ist, und die Gegenprobe, dass eine eigene
+Mod sich weiter deinstallieren lässt.

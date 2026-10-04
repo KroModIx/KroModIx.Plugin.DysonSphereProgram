@@ -218,6 +218,14 @@ public sealed partial class InstalledModsViewModel : ObservableObject, IDisposab
         try
         {
             IsBusy = true;
+            if (!row.Mod.CanModify)
+            {
+                _host.Notifications.Notify(
+                    ForeignManagerDetection.Meldung(row.Mod.Name, row.Mod.ManagedBy,
+                        Strings.T("verb.toggle")),
+                    NotificationLevel.Warning);
+                return;
+            }
             var newPath = _installer.SetEnabled(row.Mod, !row.Mod.IsEnabled);
             row.Mod = row.Mod with { IsEnabled = !row.Mod.IsEnabled, Path = newPath };
             row.OnModChanged();
@@ -234,6 +242,17 @@ public sealed partial class InstalledModsViewModel : ObservableObject, IDisposab
     private async Task UninstallAsync(ModRow? row)
     {
         if (row is null) return;
+        // v0.10.0: was r2modman & Co. ausgeliefert haben, nicht anfassen —
+        // und das VOR dem Bestaetigungsdialog, sonst bestaetigt der Nutzer
+        // etwas, das gar nicht passieren darf.
+        if (!row.Mod.CanModify)
+        {
+            _host.Notifications.Notify(
+                ForeignManagerDetection.Meldung(row.Mod.Name, row.Mod.ManagedBy,
+                    Strings.T("verb.uninstall")),
+                NotificationLevel.Warning);
+            return;
+        }
         var ok = await _host.Dialogs.ConfirmAsync(
             Strings.T("dialog.uninstall_title"),
             string.Format(Strings.T("dialog.uninstall_msg"), row.Mod.Name, row.Mod.Path),
@@ -274,6 +293,7 @@ public sealed partial class InstalledModsViewModel : ObservableObject, IDisposab
         {
             scope.Report((double)(done + failed) / targets.Count,
                 $"{done + failed + 1}/{targets.Count}: {row.Mod.Name}");
+            if (!row.Mod.CanModify) continue;   // fremdverwaltet
             try { _installer.SetEnabled(row.Mod, false); done++; }
             catch (Exception ex) { _host.Logger.Warn(ex, "Bulk-Disable {Name}", row.Mod.Name); failed++; }
         }
@@ -297,6 +317,7 @@ public sealed partial class InstalledModsViewModel : ObservableObject, IDisposab
         {
             scope.Report((double)(done + failed) / targets.Count,
                 $"{done + failed + 1}/{targets.Count}: {row.Mod.Name}");
+            if (!row.Mod.CanModify) continue;   // fremdverwaltet
             try { _installer.SetEnabled(row.Mod, true); done++; }
             catch (Exception ex) { _host.Logger.Warn(ex, "Bulk-Enable {Name}", row.Mod.Name); failed++; }
         }
@@ -309,7 +330,23 @@ public sealed partial class InstalledModsViewModel : ObservableObject, IDisposab
 public sealed partial class ModRow : ObservableObject, IDspEnrichableRow
 {
     public ModRow(DspMod mod) => Mod = mod;
-    [ObservableProperty] private DspMod _mod;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanModify))]
+    [NotifyPropertyChangedFor(nameof(ManagedByHint))]
+    [NotifyPropertyChangedFor(nameof(IsForeign))]
+    private DspMod _mod;
+
+    /// <summary>Ob das Plugin diesen Eintrag verändern darf — die View hängt
+    /// Umschalten und Deinstallieren daran.</summary>
+    public bool CanModify => Mod.CanModify;
+
+    public bool IsForeign => !Mod.CanModify;
+
+    /// <summary>„r2modman verwaltet diese Mod" — ohne diese Angabe sieht der
+    /// Nutzer nur, dass die Knöpfe fehlen, und nicht warum.</summary>
+    public string ManagedByHint => Mod.ManagedBy is null
+        ? ""
+        : string.Format(Strings.T("row.foreign_managed"), Mod.ManagedBy);
 
     // ---- IDspEnrichableRow ----
     public int? NexusModId { get; set; }

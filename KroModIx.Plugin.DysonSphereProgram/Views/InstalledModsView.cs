@@ -209,10 +209,26 @@ public sealed class InstalledModsView : UserControl
         uninstallBtn.Classes.Add("danger");
         BindRowCmd(uninstallBtn, nameof(InstalledModsViewModel.UninstallCommand));
 
+        // v0.10.0: Umschalten und Deinstallieren verschwinden bei Mods, die
+        // ein anderer Mod-Manager ausgeliefert hat (r2modman, Gale, lmm).
+        // Stattdessen steht dort, wer sie verwaltet — sonst sieht der Nutzer
+        // nur fehlende Knoepfe und nicht warum.
+        toggleBtn.Bind(Button.IsVisibleProperty, new Binding(nameof(ModRow.CanModify)));
+        uninstallBtn.Bind(Button.IsVisibleProperty, new Binding(nameof(ModRow.CanModify)));
+
+        var foreignHint = new TextBlock
+        {
+            FontSize = 10,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        foreignHint.Classes.Add("muted");
+        foreignHint.Bind(TextBlock.TextProperty, new Binding(nameof(ModRow.ManagedByHint)));
+        foreignHint.Bind(TextBlock.IsVisibleProperty, new Binding(nameof(ModRow.IsForeign)));
+
         var actions = new StackPanel
         {
             Spacing = 6, VerticalAlignment = VerticalAlignment.Center,
-            Children = { toggleBtn, detailBtn, uninstallBtn },
+            Children = { toggleBtn, detailBtn, uninstallBtn, foreignHint },
         };
 
         var grid = new Grid

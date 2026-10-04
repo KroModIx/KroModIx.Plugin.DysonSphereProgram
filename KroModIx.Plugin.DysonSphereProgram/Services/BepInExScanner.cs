@@ -38,13 +38,17 @@ public sealed class BepInExScanner
             var (baseName, enabled) = ClassifyDllName(name);
             if (baseName is null) continue;
             var info = new FileInfo(f);
+            // v0.10.0: gehoert die DLL r2modman & Co., wird sie gelistet aber
+            // nicht angefasst.
+            ForeignManagerDetection.IsForeignManaged(f, out var verwalterF);
             result.Add(new DspMod(
                 Path: f,
                 Name: baseName,
                 IsEnabled: enabled,
                 IsDirectory: false,
                 SizeBytes: info.Length,
-                InstalledUtc: info.LastWriteTimeUtc));
+                InstalledUtc: info.LastWriteTimeUtc,
+                ManagedBy: verwalterF.Length > 0 ? verwalterF : null));
         }
 
         // 2) Ordner-Layout: pro Unterordner den Haupt-DLL suchen
@@ -57,13 +61,15 @@ public sealed class BepInExScanner
             long size = 0;
             try { size = subInfo.EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length); }
             catch { }
+            ForeignManagerDetection.IsForeignManaged(subdir, out var verwalterD);
             result.Add(new DspMod(
                 Path: subdir,
                 Name: displayName,
                 IsEnabled: enabled,
                 IsDirectory: true,
                 SizeBytes: size,
-                InstalledUtc: subInfo.LastWriteTimeUtc));
+                InstalledUtc: subInfo.LastWriteTimeUtc,
+                ManagedBy: verwalterD.Length > 0 ? verwalterD : null));
         }
 
         return result.OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase).ToList();

@@ -1,5 +1,6 @@
 using System.IO;
 using NLog;
+using KroModIx.Plugin.Contracts;
 
 namespace KroModIx.Plugin.DysonSphereProgram.Services;
 
@@ -13,6 +14,7 @@ public sealed class DspInstallService
 
     public string SetEnabled(DspMod mod, bool enable)
     {
+        NurWennUnser(mod, "umschalten");
         if (mod.IsDirectory) return SetDirEnabled(mod, enable);
         return SetFileEnabled(mod, enable);
     }
@@ -63,8 +65,20 @@ public sealed class DspInstallService
         return newPath;
     }
 
+    /// <summary>Wirft, wenn der Eintrag einem fremden Mod-Manager gehört. Die
+    /// Meldung nennt Verwalter, Folge und Ausweg — am 04.10.2026 hat genau so
+    /// ein Löschen im Icarus-Plugin eine Mod aus dem Spiel genommen, ohne
+    /// dass es auffiel.</summary>
+    private static void NurWennUnser(DspMod mod, string verb)
+    {
+        if (mod.CanModify) return;
+        throw new InvalidOperationException(
+            ForeignManagerDetection.Meldung(mod.Name, mod.ManagedBy, verb));
+    }
+
     public void Uninstall(DspMod mod)
     {
+        NurWennUnser(mod, "deinstallieren");
         if (mod.IsDirectory)
         {
             if (Directory.Exists(mod.Path)) Directory.Delete(mod.Path, recursive: true);
